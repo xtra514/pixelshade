@@ -44,6 +44,11 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent, // Re-enabled so your commands will work!
     ],
+    ws: {
+        properties: {
+            browser: 'Discord iOS'
+        }
+    }
 });
 
 // When the client is ready, run this code (only once)
