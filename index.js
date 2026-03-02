@@ -1,8 +1,19 @@
 require('dotenv').config();
 const fs = require('fs');
+const express = require('express');
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const brawlAPI = require('./brawlAPI');
 const tracker = require('./tracker');
+
+const app = express();
+app.get('/', (req, res) => {
+    res.send('Bot is tracking away! I am alive.');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Web server listening on port ${PORT}`);
+});
 
 function getMods() {
     try {
