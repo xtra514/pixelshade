@@ -3,7 +3,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const API_KEY = process.env.BRAWL_STARS_TOKEN;
-const BASE_URL = 'https://api.brawlstars.com/v1';
+const BASE_URL = 'https://bsproxy.royaleapi.dev/v1';
 
 /**
  * Creates an configured axios instance for the Brawl Stars API
