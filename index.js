@@ -1,3 +1,7 @@
+// Force IPv4 DNS resolution to prevent hang on Render's IPv6 configuration
+const dns = require('node:dns');
+dns.setDefaultResultOrder('ipv4first');
+
 require('dotenv').config();
 const fs = require('fs');
 const express = require('express');
