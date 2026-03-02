@@ -432,4 +432,14 @@ client.on('interactionCreate', async interaction => {
 });
 
 // Log in to Discord with your client's token
-client.login(process.env.DISCORD_TOKEN);
+if (!process.env.DISCORD_TOKEN) {
+    console.error("CRITICAL ERROR: DISCORD_TOKEN is absolutely missing from environment variables!");
+} else {
+    console.log(`Starting login process... (Token begins with: ${process.env.DISCORD_TOKEN.substring(0, 10)}...)`);
+}
+
+client.login(process.env.DISCORD_TOKEN).then(() => {
+    console.log("Discord client login completed successfully.");
+}).catch(err => {
+    console.error("FATAL: Failed to login to Discord!", err);
+});
