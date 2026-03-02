@@ -25,21 +25,14 @@ function saveMods(mods) {
     fs.writeFileSync('./mods.json', JSON.stringify(mods, null, 2));
 }
 
-async function isOwner(message) {
+function isOwner(message) {
+    if (message.guild && message.guild.ownerId === message.author.id) return true;
     if (process.env.OWNER_ID && message.author.id === process.env.OWNER_ID) return true;
-
-    // Fetch Discord Application Owner
-    if (!client.application?.owner) await client.application?.fetch();
-    const owner = client.application?.owner;
-
-    if (owner?.id === message.author.id) return true;
-    if (owner?.members && owner.members.has(message.author.id)) return true; // Handling Teams
-
     return false;
 }
 
-async function hasPermission(message) {
-    if (await isOwner(message)) return true;
+function hasPermission(message) {
+    if (isOwner(message)) return true;
     const mods = getMods();
     return mods.includes(message.author.id);
 }
@@ -68,7 +61,7 @@ client.on('messageCreate', async message => {
     const commandName = args[0].toLowerCase();
 
     if (commandName === '!add-mod') {
-        if (!(await isOwner(message))) return message.reply('❌ Only the bot owner can add moderators.');
+        if (!isOwner(message)) return message.reply('❌ Only the bot owner can add moderators.');
         const target = message.mentions.users.first();
         if (!target) return message.reply('❌ Please mention a user to add as a mod. Example: `!add-mod @user`');
 
@@ -83,7 +76,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!remove-mod') {
-        if (!(await isOwner(message))) return message.reply('❌ Only the bot owner can remove moderators.');
+        if (!isOwner(message)) return message.reply('❌ Only the bot owner can remove moderators.');
         const target = message.mentions.users.first();
         if (!target) return message.reply('❌ Please mention a user to remove. Example: `!remove-mod @user`');
 
@@ -98,7 +91,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!start-tracking') {
-        if (!(await hasPermission(message))) return message.reply('❌ You do not have permission to use this command.');
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         const clubTag = process.env.CLUB_TAG;
         if (!clubTag || !process.env.BRAWL_STARS_TOKEN) {
             return message.reply('❌ Bot is missing BRAWL_STARS_TOKEN or CLUB_TAG in .env');
@@ -274,7 +267,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!end-tracking') {
-        if (!(await hasPermission(message))) return message.reply('❌ You do not have permission to use this command.');
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         tracker.endTracking();
         message.reply('🛑 Tracking has been stopped. Use `!start-tracking` when a new season begins.');
         return;
@@ -313,7 +306,7 @@ client.on('messageCreate', async message => {
 
     // Existing Simple commands
     if (commandName === '!ping') {
-        if (!(await hasPermission(message))) return message.reply('❌ You do not have permission to use this command.');
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         message.reply('Pong!');
         return;
     }
