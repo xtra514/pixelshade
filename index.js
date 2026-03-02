@@ -51,6 +51,9 @@ client.once('clientReady', () => {
     console.log(`Ready! Logged in as ${client.user.tag}`);
 });
 
+// Enable verbose debug logging to catch connection hanging on Render
+client.on('debug', console.log);
+
 // Listen for messages
 client.on('messageCreate', async message => {
     // Ignore messages from bots to prevent infinite loops
