@@ -1,7 +1,30 @@
 require('dotenv').config();
+const fs = require('fs');
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const brawlAPI = require('./brawlAPI');
 const tracker = require('./tracker');
+
+function getMods() {
+    try {
+        if (!fs.existsSync('./mods.json')) return [];
+        return JSON.parse(fs.readFileSync('./mods.json', 'utf8'));
+    } catch { return []; }
+}
+function saveMods(mods) {
+    fs.writeFileSync('./mods.json', JSON.stringify(mods, null, 2));
+}
+
+function isOwner(message) {
+    if (message.guild && message.guild.ownerId === message.author.id) return true;
+    if (process.env.OWNER_ID && message.author.id === process.env.OWNER_ID) return true;
+    return false;
+}
+
+function hasPermission(message) {
+    if (isOwner(message)) return true;
+    const mods = getMods();
+    return mods.includes(message.author.id);
+}
 
 // Create a new client instance
 const client = new Client({
@@ -26,7 +49,38 @@ client.on('messageCreate', async message => {
     const args = message.content.trim().split(/ +/);
     const commandName = args[0].toLowerCase();
 
+    if (commandName === '!add-mod') {
+        if (!isOwner(message)) return message.reply('❌ Only the bot/server owner can add moderators.');
+        const target = message.mentions.users.first();
+        if (!target) return message.reply('❌ Please mention a user to add as a mod. Example: `!add-mod @user`');
+
+        let mods = getMods();
+        if (!mods.includes(target.id)) {
+            mods.push(target.id);
+            saveMods(mods);
+            return message.reply(`✅ Added **${target.username}** as a bot moderator!`);
+        } else {
+            return message.reply(`⚠️ **${target.username}** is already a bot moderator.`);
+        }
+    }
+
+    if (commandName === '!remove-mod') {
+        if (!isOwner(message)) return message.reply('❌ Only the bot/server owner can remove moderators.');
+        const target = message.mentions.users.first();
+        if (!target) return message.reply('❌ Please mention a user to remove. Example: `!remove-mod @user`');
+
+        let mods = getMods();
+        if (mods.includes(target.id)) {
+            mods = mods.filter(id => id !== target.id);
+            saveMods(mods);
+            return message.reply(`✅ Removed **${target.username}** from bot moderators.`);
+        } else {
+            return message.reply(`⚠️ **${target.username}** is not a bot moderator.`);
+        }
+    }
+
     if (commandName === '!start-tracking') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         const clubTag = process.env.CLUB_TAG;
         if (!clubTag || !process.env.BRAWL_STARS_TOKEN) {
             return message.reply('❌ Bot is missing BRAWL_STARS_TOKEN or CLUB_TAG in .env');
@@ -202,6 +256,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!end-tracking') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         tracker.endTracking();
         message.reply('🛑 Tracking has been stopped. Use `!start-tracking` when a new season begins.');
         return;
@@ -240,6 +295,7 @@ client.on('messageCreate', async message => {
 
     // Existing Simple commands
     if (commandName === '!ping') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         message.reply('Pong!');
         return;
     }
