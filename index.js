@@ -346,14 +346,16 @@ client.on('messageCreate', async message => {
                     }
 
                     // Extract the Ranked Tier from the 'trophies' property (Supercell API quirk)
-                    if (log.battle.teams) {
-                        log.battle.teams.forEach(team => {
-                            team.forEach(player => {
-                                if (player.tag === `#${normalizedTargetTag}` && player.brawler && player.brawler.trophies > highestCalculatedRank) {
-                                    highestCalculatedRank = player.brawler.trophies;
-                                }
+                    if (log.battle.type === 'soloRanked' || log.battle.type === 'teamRanked') {
+                        if (log.battle.teams) {
+                            log.battle.teams.forEach(team => {
+                                team.forEach(player => {
+                                    if (player.tag === `#${normalizedTargetTag}` && player.brawler && player.brawler.trophies > highestCalculatedRank && player.brawler.trophies < 30) {
+                                        highestCalculatedRank = player.brawler.trophies;
+                                    }
+                                });
                             });
-                        });
+                        }
                     }
                 }
             });
