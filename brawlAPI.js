@@ -56,7 +56,24 @@ async function getPlayer(playerTag) {
     }
 }
 
+/**
+ * Fetches an individual player's recent battle log
+ * @param {string} playerTag - The tag of the player
+ * @returns {Promise<Array>} - Array of battle log objects
+ */
+async function getBattlelog(playerTag) {
+    try {
+        const tag = normalizeTag(playerTag);
+        const response = await apiClient.get(`/players/%23${tag}/battlelog`);
+        return response.data.items;
+    } catch (error) {
+        console.error(`Error fetching battlelog for ${playerTag}:`, error.response?.data || error.message);
+        return [];
+    }
+}
+
 module.exports = {
     getClubMembers,
-    getPlayer
+    getPlayer,
+    getBattlelog
 };

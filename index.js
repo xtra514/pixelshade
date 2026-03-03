@@ -316,6 +316,91 @@ client.on('messageCreate', async message => {
         return;
     }
 
+    if (commandName === '!ranked') {
+        const targetTag = args[1];
+        if (!targetTag) return message.reply('❌ Please provide a player tag. Example: `!ranked #PUP09U9Q`');
+
+        try {
+            const waitMsg = await message.reply(`⏳ Fetching recent battle logs for **${targetTag}**...`);
+
+            const logs = await brawlAPI.getBattlelog(targetTag);
+            if (!logs || logs.length === 0) {
+                return waitMsg.edit(`❌ No battle logs found for **${targetTag}** or the API is unavailable.`);
+            }
+
+            let rankedWins = 0;
+            let rankedLosses = 0;
+            let rankedDraws = 0;
+            let starPlayerCount = 0;
+            let highestCalculatedRank = 0;
+
+            logs.forEach(log => {
+                if (log.battle.type === 'soloRanked' || log.battle.type === 'teamRanked' || log.battle.mode === 'ranked' || log.battle.type === 'ranked') {
+                    if (log.battle.result === 'victory') rankedWins++;
+                    else if (log.battle.result === 'defeat') rankedLosses++;
+                    else if (log.battle.result === 'draw') rankedDraws++;
+
+                    const normalizedTargetTag = targetTag.replace(/^#/, '').replace(/^%23/i, '').toUpperCase();
+                    if (log.battle.starPlayer && log.battle.starPlayer.tag === `#${normalizedTargetTag}`) {
+                        starPlayerCount++;
+                    }
+
+                    // Extract the Ranked Tier from the 'trophies' property (Supercell API quirk)
+                    if (log.battle.teams) {
+                        log.battle.teams.forEach(team => {
+                            team.forEach(player => {
+                                if (player.tag === `#${normalizedTargetTag}` && player.brawler && player.brawler.trophies > highestCalculatedRank) {
+                                    highestCalculatedRank = player.brawler.trophies;
+                                }
+                            });
+                        });
+                    }
+                }
+            });
+
+            const totalRanked = rankedWins + rankedLosses + rankedDraws;
+
+            if (totalRanked === 0) {
+                return waitMsg.edit(`⚠️ **${targetTag}** has not played any Ranked matches in their last 25 battles.`);
+            }
+
+            const winRate = ((rankedWins / totalRanked) * 100).toFixed(1);
+
+            const ranksMap = [
+                "Unranked",
+                "Bronze I", "Bronze II", "Bronze III",
+                "Silver I", "Silver II", "Silver III",
+                "Gold I", "Gold II", "Gold III",
+                "Diamond I", "Diamond II", "Diamond III",
+                "Mythic I", "Mythic II", "Mythic III",
+                "Legendary I", "Legendary II", "Legendary III",
+                "Masters"
+            ];
+
+            const currentRankName = ranksMap[highestCalculatedRank] || `Tier ${highestCalculatedRank}`;
+
+            const embed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle(`⚔️ Ranked Performance: ${targetTag}`)
+                .setDescription(`**Current Rank:** ${currentRankName}\n*Based on the last ${logs.length} battles:*`)
+                .addFields(
+                    { name: '🟢 Wins', value: `**${rankedWins}**`, inline: true },
+                    { name: '🔴 Losses', value: `**${rankedLosses}**`, inline: true },
+                    { name: '⚪ Draws', value: `**${rankedDraws}**`, inline: true },
+                    { name: '📊 Win Rate', value: `**${winRate}%**`, inline: true },
+                    { name: '⭐ Star Player', value: `**${starPlayerCount} times**`, inline: true }
+                )
+                .setFooter({ text: `Brawl Stars Ranked Stats • ${totalRanked} Ranked Matches Found` })
+                .setTimestamp();
+
+            await waitMsg.edit({ content: null, embeds: [embed] });
+
+        } catch (error) {
+            message.reply('❌ An error occurred while calculating the ranked stats. Make sure the tag is correct.');
+        }
+        return;
+    }
+
     // Existing Simple commands
     if (commandName === '!ping') {
         if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
