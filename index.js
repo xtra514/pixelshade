@@ -208,20 +208,35 @@ client.on('messageCreate', async message => {
                         const trophiesGained = currentBrawler.trophies - baselineTrophies;
 
                         if (trophiesGained > 0) {
-                            // Apply exact Multipliers provided by the server owner
-                            let finalMultiplier = 0.5;
+                            // Apply incremental Multipliers based on Trophy Brackets
+                            const brackets = [
+                                { min: 0, max: 999, mult: 0.5 },
+                                { min: 1000, max: 1999, mult: 1.0 },
+                                { min: 2000, max: 2499, mult: 3.0 },
+                                { min: 2500, max: 2699, mult: 6.0 },
+                                { min: 2700, max: 2999, mult: 12.0 },
+                                { min: 3000, max: 3099, mult: 25.0 },
+                                { min: 3100, max: 3499, mult: 50.0 },
+                                { min: 3500, max: 3999, mult: 75.0 },
+                                { min: 4000, max: Infinity, mult: 100.0 }
+                            ];
 
-                            if (currentBrawler.trophies >= 4000) finalMultiplier = 100.0;
-                            else if (currentBrawler.trophies >= 3500) finalMultiplier = 75.0;
-                            else if (currentBrawler.trophies >= 3100) finalMultiplier = 50.0;
-                            else if (currentBrawler.trophies >= 3000) finalMultiplier = 25.0;
-                            else if (currentBrawler.trophies >= 2700) finalMultiplier = 12.0;
-                            else if (currentBrawler.trophies >= 2500) finalMultiplier = 6.0;
-                            else if (currentBrawler.trophies >= 2000) finalMultiplier = 3.0;
-                            else if (currentBrawler.trophies >= 1000) finalMultiplier = 1.0;
-                            else finalMultiplier = 0.5; // 0-999
+                            let tempPoints = 0;
+                            let currentTrophies = baselineTrophies;
+                            const targetTrophies = currentBrawler.trophies;
 
-                            totalGrindPoints += (trophiesGained * finalMultiplier);
+                            for (const bracket of brackets) {
+                                if (currentTrophies > bracket.max) continue; // Skip brackets below current trophies
+                                if (currentTrophies >= targetTrophies) break; // Reached target
+
+                                const endOfBracket = Math.min(targetTrophies, bracket.max + 1);
+                                const trophiesInBracket = endOfBracket - currentTrophies;
+
+                                tempPoints += (trophiesInBracket * bracket.mult);
+                                currentTrophies = endOfBracket;
+                            }
+
+                            totalGrindPoints += tempPoints;
 
                             // Add huge one-time bonus for hitting new Prestige Ranks
                             let prestigeBonus = 0;
@@ -362,11 +377,42 @@ client.on('messageCreate', async message => {
 
             const totalRanked = rankedWins + rankedLosses + rankedDraws;
 
-            if (totalRanked === 0) {
-                return waitMsg.edit(`⚠️ **${targetTag}** has not played any Ranked matches in their last 25 battles.`);
+            // Load persistent ranking data
+            let savedRanks = {};
+            if (fs.existsSync(DATA_FILE)) {
+                try {
+                    const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+                    if (data.ranks) savedRanks = data.ranks;
+                } catch (e) {
+                    console.error('Error reading data.json for ranks:', e);
+                }
             }
 
-            const winRate = ((rankedWins / totalRanked) * 100).toFixed(1);
+            // Update persistent rank if the scanned rank is higher
+            if (highestCalculatedRank > 0) {
+                if (!savedRanks[normalizedTargetTag] || highestCalculatedRank > savedRanks[normalizedTargetTag]) {
+                    savedRanks[normalizedTargetTag] = highestCalculatedRank;
+                    try {
+                        let fullData = {};
+                        if (fs.existsSync(DATA_FILE)) {
+                            fullData = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+                        }
+                        fullData.ranks = savedRanks;
+                        fs.writeFileSync(DATA_FILE, JSON.stringify(fullData, null, 2), 'utf8');
+                    } catch (e) {
+                        console.error('Error saving ranks to data.json:', e);
+                    }
+                }
+            } else if (savedRanks[normalizedTargetTag]) {
+                // Keep the previous highest rank if they haven't played recently
+                highestCalculatedRank = savedRanks[normalizedTargetTag];
+            }
+
+            if (totalRanked === 0 && highestCalculatedRank === 0) {
+                return waitMsg.edit(`⚠️ **${targetTag}** has not played any Ranked matches recently, and I have no saved record of their Rank.`);
+            }
+
+            const winRate = totalRanked > 0 ? ((rankedWins / totalRanked) * 100).toFixed(1) : 0;
 
             const ranksMap = [
                 "Unranked",
