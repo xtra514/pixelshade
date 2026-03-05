@@ -517,18 +517,34 @@ client.on('interactionCreate', async interaction => {
                         const trophiesGained = currentBrawler.trophies - baselineTrophies;
 
                         if (trophiesGained > 0) {
-                            let finalMultiplier = 0.5;
-                            if (currentBrawler.trophies >= 4000) finalMultiplier = 100.0;
-                            else if (currentBrawler.trophies >= 3500) finalMultiplier = 75.0;
-                            else if (currentBrawler.trophies >= 3100) finalMultiplier = 50.0;
-                            else if (currentBrawler.trophies >= 3000) finalMultiplier = 25.0;
-                            else if (currentBrawler.trophies >= 2700) finalMultiplier = 12.0;
-                            else if (currentBrawler.trophies >= 2500) finalMultiplier = 6.0;
-                            else if (currentBrawler.trophies >= 2000) finalMultiplier = 3.0;
-                            else if (currentBrawler.trophies >= 1000) finalMultiplier = 1.0;
-                            else finalMultiplier = 0.5;
+                            const brackets = [
+                                { min: 0, max: 999, mult: 0.5 },
+                                { min: 1000, max: 1999, mult: 1.0 },
+                                { min: 2000, max: 2499, mult: 3.0 },
+                                { min: 2500, max: 2699, mult: 6.0 },
+                                { min: 2700, max: 2999, mult: 12.0 },
+                                { min: 3000, max: 3099, mult: 25.0 },
+                                { min: 3100, max: 3499, mult: 50.0 },
+                                { min: 3500, max: 3999, mult: 75.0 },
+                                { min: 4000, max: Infinity, mult: 100.0 }
+                            ];
 
-                            totalGrindPoints += (trophiesGained * finalMultiplier);
+                            let tempPoints = 0;
+                            let currentTrophies = baselineTrophies;
+                            const targetTrophies = currentBrawler.trophies;
+
+                            for (const bracket of brackets) {
+                                if (currentTrophies > bracket.max) continue; // Skip brackets below current trophies
+                                if (currentTrophies >= targetTrophies) break; // Reached target
+
+                                const endOfBracket = Math.min(targetTrophies, bracket.max + 1);
+                                const trophiesInBracket = endOfBracket - currentTrophies;
+
+                                tempPoints += (trophiesInBracket * bracket.mult);
+                                currentTrophies = endOfBracket;
+                            }
+
+                            totalGrindPoints += tempPoints;
 
                             // Add huge one-time bonus for hitting new Prestige Ranks
                             let prestigeBonus = 0;
