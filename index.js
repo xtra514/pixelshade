@@ -8,6 +8,7 @@ const express = require('express');
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const brawlAPI = require('./brawlAPI');
 const tracker = require('./tracker');
+const { scrapeRankedElo } = require('./scrape_elo');
 
 const app = express();
 app.get('/', (req, res) => {
@@ -328,6 +329,26 @@ client.on('messageCreate', async message => {
             .setFooter({ text: 'Grind hard.' });
 
         message.reply({ embeds: [embed] });
+        return;
+    }
+
+    if (commandName === '!elo') {
+        const tag = args[1];
+        if (!tag) return message.reply('❌ Please provide a player tag. Example: `!elo #PUP09U9Q`');
+
+        try {
+            const waitMsg = await message.reply('⏳ Bypassing Cloudflare and scraping Brawlytix for exact Ranked Elo... (may take 10-15 seconds)');
+            const elo = await scrapeRankedElo(tag);
+
+            if (elo !== null) {
+                await waitMsg.edit(`✅ **Player ${tag}** has an exact Ranked Elo of: **${elo.toLocaleString()}** 🏆`);
+            } else {
+                await waitMsg.edit(`❌ Could not find Ranked Elo for ${tag}. This either means they haven't played Ranked mode, or the scraper timed out.`);
+            }
+        } catch (error) {
+            console.error(error);
+            message.reply('❌ Failed to extract Elo due to a server error.');
+        }
         return;
     }
 
