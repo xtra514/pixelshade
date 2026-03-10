@@ -1,16 +1,21 @@
-const cloudscraper = require('cloudscraper');
-
 async function scrapeRankedElo(tag) {
     try {
         const cleanTag = tag.replace('#', '');
-        console.log(`Scraping Elo for ${cleanTag} via cloudscraper...`);
+        console.log(`Scraping Elo for ${cleanTag} via got-scraping...`);
 
-        const html = await cloudscraper.get({
-            uri: `https://brawlytix.com/profile/${cleanTag}`,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        // Dynamically import got-scraping since it's an ES Module
+        const { gotScraping } = await import('got-scraping');
+
+        const response = await gotScraping({
+            url: `https://brawlytix.com/profile/${cleanTag}`,
+            headerGeneratorOptions: {
+                browsers: [{ name: 'chrome', minVersion: 110 }],
+                devices: ['desktop'],
+                locales: ['en-US']
             }
         });
+
+        const html = response.body;
 
         // Brawlytix HTML structure: 6,405 <label>Ranked Elo</label>
         const eloMatch = html.match(/([\d,]+)\s*<label[^>]*>Ranked Elo<\/label>/i);
