@@ -6,8 +6,9 @@ async function scrapeRankedElo(tag) {
         // Dynamically import got-scraping since it's an ES Module
         const { gotScraping } = await import('got-scraping');
 
+        const urlToScrape = `https://brawlytix.com/profile/${cleanTag}`;
         const response = await gotScraping({
-            url: `https://brawlytix.com/profile/${cleanTag}`,
+            url: `https://corsproxy.io/?${encodeURIComponent(urlToScrape)}`,
             headerGeneratorOptions: {
                 browsers: [{ name: 'chrome', minVersion: 110 }],
                 devices: ['desktop'],
