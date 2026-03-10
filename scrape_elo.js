@@ -5,7 +5,12 @@ async function scrapeRankedElo(tag) {
         const cleanTag = tag.replace('#', '');
         console.log(`Scraping Elo for ${cleanTag} via cloudscraper...`);
 
-        const html = await cloudscraper.get(`https://brawlytix.com/profile/${cleanTag}`);
+        const html = await cloudscraper.get({
+            uri: `https://brawlytix.com/profile/${cleanTag}`,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            }
+        });
 
         // Brawlytix HTML structure: 6,405 <label>Ranked Elo</label>
         const eloMatch = html.match(/([\d,]+)\s*<label[^>]*>Ranked Elo<\/label>/i);
