@@ -61,38 +61,54 @@ client.once('clientReady', () => {
     console.log(`Ready! Logged in as ${client.user.tag}`);
 
     // Automated Ranked Elo Tracker
+    let isBackgroundScraping = false;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
     setInterval(async () => {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) return;
+        if (isBackgroundScraping) {
+            console.log("Skipping tracker interval: Previous scrape queue is still running.");
+            return;
+        }
 
-        console.log("Checking Battlelogs for Ranked Elo updates...");
-        for (const member of data.eloMembers) {
-            try {
-                // Fetch recent battles (free & unlimited)
-                const logs = await brawlAPI.getBattlelog(member.tag);
-                if (!logs || logs.length === 0) continue;
+        isBackgroundScraping = true;
 
-                // Find latest ranked match chronologically
-                const latestRanked = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked' || l.battle.type === 'ranked');
-                if (!latestRanked) continue;
+        try {
+            console.log("Checking Battlelogs for Ranked Elo updates...");
+            for (const member of data.eloMembers) {
+                try {
+                    // Fetch recent battles (free & unlimited)
+                    const logs = await brawlAPI.getBattlelog(member.tag);
+                    if (!logs || logs.length === 0) continue;
 
-                // If this is a new ranked match they just played
-                if (!member.lastBattleTime || latestRanked.battleTime > member.lastBattleTime) {
-                    console.log(`New Ranked match detected for ${member.name}. Triggering ScrapingAnt Proxy...`);
+                    // Find latest ranked match chronologically
+                    const latestRanked = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked' || l.battle.type === 'ranked');
+                    if (!latestRanked) continue;
 
-                    // Targeted proxy request to Brawlytix to get exact new Elo
-                    const newElo = await scrapeRankedElo(member.tag);
-                    if (newElo !== null) {
-                        tracker.updateEloForMember(member.tag, newElo, latestRanked.battleTime);
-                        console.log(`Successfully updated ${member.name} Elo to ${newElo}`);
-                    } else {
-                        // Failed to scrape (timeout), but mark battle as seen so we don't spam it later
-                        tracker.updateEloForMember(member.tag, null, latestRanked.battleTime);
+                    // If this is a new ranked match they just played
+                    if (!member.lastBattleTime || latestRanked.battleTime > member.lastBattleTime) {
+                        console.log(`New Ranked match detected for ${member.name}. Triggering ScrapingAnt Proxy...`);
+
+                        // Targeted proxy request to Brawlytix to get exact new Elo
+                        const newElo = await scrapeRankedElo(member.tag);
+                        if (newElo !== null) {
+                            tracker.updateEloForMember(member.tag, newElo, latestRanked.battleTime);
+                            console.log(`Successfully updated ${member.name} Elo to ${newElo}`);
+                        } else {
+                            // Failed to scrape (timeout), but mark battle as seen so we don't spam it later
+                            tracker.updateEloForMember(member.tag, null, latestRanked.battleTime);
+                        }
+
+                        // CRITICAL: Prevent 409 Concurrent Limit errors on Free Tier if 2+ people finish games at the same time
+                        await sleep(4000);
                     }
+                } catch (e) {
+                    console.error(`Background Tracker Error for ${member.name}:`, e.message);
                 }
-            } catch (e) {
-                console.error(`Background Tracker Error for ${member.name}:`, e.message);
             }
+        } finally {
+            isBackgroundScraping = false; // Release the lock
         }
     }, 2 * 60 * 1000); // Run every 2 minutes
 });
