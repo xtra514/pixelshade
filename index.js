@@ -104,7 +104,7 @@ client.once('clientReady', () => {
         } catch (error) {
             console.error(error);
         }
-    }, 2 * 60 * 1000); // Run every 2 minutes
+    }, 1 * 60 * 1000); // Run every 1 minute
 });
 
 // Enable verbose debug logging to catch connection hanging on Render
