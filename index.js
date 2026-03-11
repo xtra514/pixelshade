@@ -427,12 +427,12 @@ client.on('messageCreate', async message => {
         if (!clubTag) return message.reply('❌ CLUB_TAG is not set in the .env file.');
 
         if (global.isScraping) {
-            return message.reply('⏳ **A scrape session is currently active.** Please wait a few minutes before trying again.');
+            return message.reply('⏳ **A database sync is currently active.** Please wait a few minutes before trying again.');
         }
         global.isScraping = true;
 
         try {
-            const waitMsg = await message.reply('⏳ **Initializing Automated Elo Tracker...**\nFetching current members and performing a baseline bulk proxy scrape (may take a minute or two)...');
+            const waitMsg = await message.reply('⏳ **Initializing Automated Tracker...**\nFetching current members and performing a baseline database sync (may take a minute or two)...');
 
             const members = await brawlAPI.getClubMembers(clubTag);
             if (!members || members.length === 0) return waitMsg.edit('❌ Cannot find club members.');
@@ -457,12 +457,12 @@ client.on('messageCreate', async message => {
                     tracker.updateEloForMember(member.tag, scrapeData.elo, scrapeData.skill, lastTime);
                     successes++;
 
-                    await waitMsg.edit(`⏳ **Initializing Automated Elo Tracker...**\n✅ Successfully scraped baselines for **${successes}/${members.length}** members so far...\n*(Waiting 1 second between members to prevent API Rate Limits)*`);
+                    await waitMsg.edit(`⏳ **Initializing Automated Tracker...**\n✅ Successfully synced baselines for **${successes}/${members.length}** members so far...\n*(Waiting 1 second between members to prevent Rate Limits)*`);
                 }
 
                 await sleep(1000); // 1 second delay to prevent Brawlytix / ScrapingAnt blocks
             }
-            await waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully scraped baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
+            await waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully synced baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
         } catch (error) {
             message.reply(`❌ ${error.message}`);
         } finally {
@@ -474,7 +474,7 @@ client.on('messageCreate', async message => {
     if (commandName === '!rank') {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) {
-            return message.reply('❌ **Brawlytix Database Empty.** \nAutomated tracking for Ranked Elo & Skill has not been started yet. Please use `!start-elo` first to initiate the bulk Brawlytix scrape!');
+            return message.reply('❌ **Global Database Empty.** \nAutomated tracking for Ranked Elo & Skill has not been started yet. Please use `!start-elo` first to initiate the global database sync!');
         }
 
         const sorted = data.eloMembers
@@ -510,7 +510,7 @@ client.on('messageCreate', async message => {
     if (commandName === '!skill') {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) {
-            return message.reply('❌ **Brawlytix Database Empty.** \nSkill Scores are tracked automatically via Brawlytix, but the database is currently empty. Please use `!start-elo` first to trigger the bulk scraper!');
+            return message.reply('❌ **Global Database Empty.** \nSkill Scores are tracked automatically, but the database is currently empty. Please use `!start-elo` first to trigger the bulk sync!');
         }
 
         const sorted = data.eloMembers
@@ -548,14 +548,14 @@ client.on('messageCreate', async message => {
         if (!tag) return message.reply('❌ Please provide a player tag. Example: `!elo #PUP09U9Q`');
 
         try {
-            const waitMsg = await message.reply('⏳ Getting into queue... Bypassing Cloudflare and scraping Brawlytix (may take 10-15 seconds)');
+            const waitMsg = await message.reply('⏳ Syncing with global database (This may take 5-15 seconds)...');
             const scrapeData = await queueScrape(tag);
 
             if (scrapeData !== null) {
                 const skillStr = scrapeData.skill ? ` | Skill: **${scrapeData.skill}**` : '';
                 await waitMsg.edit(`✅ **Player ${tag}** has an exact Ranked Elo of: **${scrapeData.elo.toLocaleString()}** 🏆${skillStr}`);
             } else {
-                await waitMsg.edit(`❌ Could not find Ranked Elo for ${tag}. This either means they haven't played Ranked mode, or the scraper timed out.`);
+                await waitMsg.edit(`❌ Could not find Ranked Elo for ${tag}. This either means they haven't played Ranked mode, or the database sync timed out.`);
             }
         } catch (error) {
             console.error(error);
