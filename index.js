@@ -96,7 +96,7 @@ client.once('clientReady', () => {
                         }
 
                         // CRITICAL: Prevent 409 Concurrent Limit errors on Free Tier if 2+ people finish games at the same time
-                        await sleep(4000);
+                        await sleep(1000);
                     }
                 } catch (e) {
                     console.error(`Background Tracker Error for ${member.name}:`, e.message);
@@ -124,7 +124,7 @@ async function queueScrape(tag) {
         const elo = await scrapeRankedElo(tag);
         return elo;
     } finally {
-        await sleep(3500); // Mandatory cooldown before releasing the lock
+        await sleep(1000); // 1-second cooldown before releasing the lock
         global.isScraping = false;
     }
 }
@@ -433,11 +433,10 @@ client.on('messageCreate', async message => {
                     tracker.updateEloForMember(member.tag, scrapeData.elo, scrapeData.skill, lastTime);
                     successes++;
 
-                    // Live Feedback on Discord
-                    await waitMsg.edit(`⏳ **Initializing Automated Elo Tracker...**\n✅ Successfully scraped baselines for **${successes}/${members.length}** members so far...\n*(Waiting 4 seconds between members to prevent API Rate Limits)*`);
+                    await waitMsg.edit(`⏳ **Initializing Automated Elo Tracker...**\n✅ Successfully scraped baselines for **${successes}/${members.length}** members so far...\n*(Waiting 1 second between members to prevent API Rate Limits)*`);
                 }
 
-                await sleep(4000); // 4 second delay to prevent Brawlytix / ScrapingAnt blocks
+                await sleep(1000); // 1 second delay to prevent Brawlytix / ScrapingAnt blocks
             }
             await waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully scraped baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
         } catch (error) {
