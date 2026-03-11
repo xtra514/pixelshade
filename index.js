@@ -466,12 +466,21 @@ client.on('messageCreate', async message => {
             .setTimestamp();
 
         let desc = '';
-        sorted.forEach((member, i) => {
+        sorted.slice(0, 5).forEach((member, i) => {
             desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo\n`;
         });
 
         embed.setDescription(desc);
-        message.reply({ embeds: [embed] });
+
+        // Add "Show All" Button
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('show_all_rank')
+                .setLabel('Show All (30)')
+                .setStyle(ButtonStyle.Primary)
+        );
+
+        message.reply({ embeds: [embed], components: [row] });
         return;
     }
 
@@ -631,7 +640,7 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
     const data = tracker.getTrackingData();
-    if (!data.isTracking || !data.members) {
+    if (!data) {
         return interaction.reply({ content: '❌ Tracking data is not available.', ephemeral: true });
     }
 
@@ -742,6 +751,29 @@ client.on('interactionCreate', async interaction => {
 
             embed.setDescription(description);
             await interaction.editReply({ embeds: [embed], components: [] }); // Remove the button
+        }
+
+        if (interaction.customId === 'show_all_rank') {
+            if (!data.isEloTracking || !data.eloMembers) {
+                return interaction.editReply({ content: '❌ Elo tracking is not active.', embeds: [], components: [] });
+            }
+
+            const sorted = data.eloMembers
+                .filter(m => m.currentElo !== null)
+                .sort((a, b) => b.currentElo - a.currentElo);
+
+            const embed = new EmbedBuilder()
+                .setColor('#E91E63')
+                .setTitle('🏆 Full Ranked Elo Leaderboard')
+                .setTimestamp();
+
+            let desc = '';
+            sorted.forEach((member, i) => {
+                desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo\n`;
+            });
+
+            embed.setDescription(desc);
+            await interaction.editReply({ content: null, embeds: [embed], components: [] });
         }
 
     } catch (error) {
