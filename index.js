@@ -431,6 +431,9 @@ client.on('messageCreate', async message => {
                 if (elo !== null) {
                     tracker.updateEloForMember(member.tag, elo, lastTime);
                     successes++;
+
+                    // Live Feedback on Discord
+                    await waitMsg.edit(`⏳ **Initializing Automated Elo Tracker...**\n✅ Successfully scraped baselines for **${successes}/${members.length}** members so far...\n*(Waiting 4 seconds between members to prevent API Rate Limits)*`);
                 }
 
                 await sleep(4000); // 4 second delay to prevent Brawlytix / ScrapingAnt blocks
