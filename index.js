@@ -681,10 +681,12 @@ client.on('interactionCreate', async interaction => {
     }
 
     try {
+        console.log(`[Interaction] Received button click: ${interaction.customId}`);
         try {
             await interaction.deferUpdate(); // Acknowledge the click so it doesn't fail
+            console.log(`[Interaction] deferUpdate successful`);
         } catch (deferError) {
-            console.warn("Could not defer interaction, it may have expired.");
+            console.error(`[Interaction] deferUpdate failed: ${deferError.message}`);
         }
 
         if (interaction.customId === 'show_all_trophies') {
@@ -813,7 +815,7 @@ client.on('interactionCreate', async interaction => {
             });
 
             embed.setDescription(desc);
-            await interaction.editReply({ content: null, embeds: [embed], components: [] });
+            await interaction.editReply({ embeds: [embed], components: [] });
         }
 
         if (interaction.customId === 'show_all_skill') {
@@ -836,7 +838,7 @@ client.on('interactionCreate', async interaction => {
             });
 
             embed.setDescription(desc);
-            await interaction.editReply({ content: null, embeds: [embed], components: [] });
+            await interaction.editReply({ embeds: [embed], components: [] });
         }
 
     } catch (error) {
