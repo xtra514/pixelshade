@@ -61,18 +61,18 @@ client.once('clientReady', () => {
     console.log(`Ready! Logged in as ${client.user.tag}`);
 
     // Automated Ranked Elo Tracker
-    let isBackgroundScraping = false;
+    global.isScraping = false;
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     setInterval(async () => {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) return;
-        if (isBackgroundScraping) {
+        if (global.isScraping) {
             console.log("Skipping tracker interval: Previous scrape queue is still running.");
             return;
         }
 
-        isBackgroundScraping = true;
+        global.isScraping = true;
 
         try {
             console.log("Checking Battlelogs for Ranked Elo updates...");
@@ -108,7 +108,7 @@ client.once('clientReady', () => {
                 }
             }
         } finally {
-            isBackgroundScraping = false; // Release the lock
+            global.isScraping = false; // Release the lock
         }
     }, 2 * 60 * 1000); // Run every 2 minutes
 });
@@ -389,6 +389,11 @@ client.on('messageCreate', async message => {
         const clubTag = process.env.CLUB_TAG;
         if (!clubTag) return message.reply('❌ CLUB_TAG is not set in the .env file.');
 
+        if (global.isScraping) {
+            return message.reply('⏳ **A scrape session is currently active.** Please wait a few minutes before trying again.');
+        }
+        global.isScraping = true;
+
         try {
             const waitMsg = await message.reply('⏳ **Initializing Automated Elo Tracker...**\nFetching current members and performing a baseline bulk proxy scrape (may take a minute or two)...');
 
@@ -417,12 +422,14 @@ client.on('messageCreate', async message => {
                 }
 
                 // Add a small delay between proxy requests to prevent Brawlytix from blocking the scrape session
-                await sleep(3000);
+                await sleep(4000);
             }
 
             waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully scraped baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
         } catch (error) {
             message.reply(`❌ ${error.message}`);
+        } finally {
+            global.isScraping = false; // Release the lock
         }
         return;
     }
