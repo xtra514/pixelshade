@@ -4,14 +4,31 @@ async function scrapeRankedElo(tag) {
         console.log(`Scraping Elo for ${cleanTag} via got-scraping...`);
 
         let html;
-        if (process.env.SCRAPINGANT_KEY) {
-            console.log(`Using ScrapingAnt API for Elo scrape...`);
-            const scrapingAntUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(`https://brawlytix.com/profile/${cleanTag}`)}&x-api-key=${process.env.SCRAPINGANT_KEY}&browser=false`;
+        const keys = process.env.SCRAPINGANT_KEYS ? process.env.SCRAPINGANT_KEYS.split(',') : (process.env.SCRAPINGANT_KEY ? [process.env.SCRAPINGANT_KEY] : []);
 
-            // Raw axios request directly to the API, omitting got-scraping's TLS spoofers
+        if (keys.length > 0) {
+            console.log(`Using ScrapingAnt API Configuration (${keys.length} keys loaded for rotation)...`);
             const axios = require('axios');
-            const res = await axios.get(scrapingAntUrl, { timeout: 20000 }); // 20-second proxy timeout
-            html = res.data;
+            let success = false;
+
+            for (let i = 0; i < keys.length; i++) {
+                const key = keys[i].trim();
+                try {
+                    const scrapingAntUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(`https://brawlytix.com/profile/${cleanTag}`)}&x-api-key=${key}&browser=false`;
+
+                    // Raw axios request directly to the API, omitting got-scraping's TLS spoofers
+                    const res = await axios.get(scrapingAntUrl, { timeout: 20000 }); // 20-second proxy timeout
+                    html = res.data;
+                    success = true;
+                    break; // We got the HTML successfully, break out of the loop
+                } catch (apiError) {
+                    console.error(`ScrapingAnt Key #${i + 1} Failed (Quota limits or Timeout):`, apiError.message);
+                    if (i === keys.length - 1) {
+                        console.error('All ScrapingAnt keys exhausted/failed.');
+                        return null;
+                    }
+                }
+            }
         } else {
             console.log(`Using CORSProxy API (Will fail on Render)...`);
             const urlToScrape = `https://brawlytix.com/profile/${cleanTag}`;
