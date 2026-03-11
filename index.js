@@ -401,6 +401,11 @@ client.on('messageCreate', async message => {
         const clubTag = process.env.CLUB_TAG;
         if (!clubTag) return message.reply('❌ CLUB_TAG is not set in the .env file.');
 
+        if (global.isScraping) {
+            return message.reply('⏳ **A scrape session is currently active.** Please wait a few minutes before trying again.');
+        }
+        global.isScraping = true;
+
         try {
             const waitMsg = await message.reply('⏳ **Initializing Automated Elo Tracker...**\nFetching current members and performing a baseline bulk proxy scrape (may take a minute or two)...');
 
@@ -421,14 +426,16 @@ client.on('messageCreate', async message => {
                     if (latest) lastTime = latest.battleTime;
                 }
 
-                const elo = await queueScrape(member.tag);
+                // Instead of using queueScrape, we already hold the master bot lock for this loop
+                const elo = await scrapeRankedElo(member.tag);
                 if (elo !== null) {
                     tracker.updateEloForMember(member.tag, elo, lastTime);
                     successes++;
                 }
-            }
 
-            waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully scraped baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
+                await sleep(4000); // 4 second delay to prevent Brawlytix / ScrapingAnt blocks
+            }
+            await waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully scraped baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
         } catch (error) {
             message.reply(`❌ ${error.message}`);
         } finally {
