@@ -687,6 +687,7 @@ client.on('interactionCreate', async interaction => {
             console.log(`[Interaction] deferUpdate successful`);
         } catch (deferError) {
             console.error(`[Interaction] deferUpdate failed: ${deferError.message}`);
+            return; // Exit early if deferUpdate failed (e.g. user double-clicked)
         }
 
         if (interaction.customId === 'show_all_trophies') {
