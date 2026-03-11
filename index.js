@@ -65,6 +65,7 @@ client.once('clientReady', () => {
 
     // Automated Ranked Elo Tracker
     setInterval(async () => {
+        if (global.botPaused) return; // Halt background polling if killswitch is active
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) return;
 
@@ -111,6 +112,9 @@ client.once('clientReady', () => {
 // Enable verbose debug logging to catch connection hanging on Render
 client.on('debug', console.log);
 
+// Global Bot Pause State (Killswitch)
+global.botPaused = false;
+
 // Global Scrape Queue logic
 global.isScraping = false;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -137,6 +141,26 @@ client.on('messageCreate', async message => {
     // Brawl Stars Club Tracker Commands
     const args = message.content.trim().split(/ +/);
     const commandName = args[0].toLowerCase();
+
+    // Owner Kill Switch Commands (Bypasses paused state)
+    if (commandName === '!stop-bot') {
+        if (!isOwner(message)) return message.reply('❌ Only the bot owner can use the master killswitch.');
+        if (global.botPaused) return message.reply('⚠️ **The bot is already stopped.**');
+        global.botPaused = true;
+        return message.reply('🛑 **MASTER KILLSWITCH ENGAGED** 🛑\nAll bot commands, background tracking, and Brawlytix scraping have been completely halted.\nType `!start-bot` to resume normal operations.');
+    }
+
+    if (commandName === '!start-bot') {
+        if (!isOwner(message)) return message.reply('❌ Only the bot owner can use the master killswitch.');
+        if (!global.botPaused) return message.reply('⚠️ **The bot is already running normally.**');
+        global.botPaused = false;
+        return message.reply('✅ **SYSTEM ONLINE** ✅\nBot commands and background tracking have been re-enabled.');
+    }
+
+    // IF GLOBALLY PAUSED, BLOCK ALL OTHER COMMANDS
+    if (global.botPaused) {
+        return; // Silently ignore to prevent spam
+    }
 
     if (commandName === '!add-mod') {
         if (!isOwner(message)) return message.reply('❌ Only the bot owner can add moderators.');
@@ -674,6 +698,7 @@ client.on('messageCreate', async message => {
 // Listen for button clicks (Interactions)
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
+    if (global.botPaused) return; // Ignore buttons if bot is stopped
 
     const data = tracker.getTrackingData();
     if (!data) {
