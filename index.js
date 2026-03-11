@@ -76,8 +76,8 @@ client.once('clientReady', () => {
                     const logs = await brawlAPI.getBattlelog(member.tag);
                     if (!logs || logs.length === 0) continue;
 
-                    // Find latest ranked match chronologically
-                    const latestRanked = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked' || l.battle.type === 'ranked');
+                    // Find latest competitive ranked match chronologically
+                    const latestRanked = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked');
                     if (!latestRanked) continue;
 
                     // If this is a new ranked match they just played
@@ -422,7 +422,7 @@ client.on('messageCreate', async message => {
                 const logs = await brawlAPI.getBattlelog(member.tag);
                 let lastTime = null;
                 if (logs && logs.length > 0) {
-                    const latest = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked' || l.battle.type === 'ranked');
+                    const latest = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked');
                     if (latest) lastTime = latest.battleTime;
                 }
 
