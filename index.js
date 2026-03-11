@@ -384,6 +384,8 @@ client.on('messageCreate', async message => {
 
             // Do an initial loop to grab current Elo for everyone immediately
             let successes = 0;
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+
             for (const member of eloMembers) {
                 const logs = await brawlAPI.getBattlelog(member.tag);
                 let lastTime = null;
@@ -397,6 +399,9 @@ client.on('messageCreate', async message => {
                     tracker.updateEloForMember(member.tag, elo, lastTime);
                     successes++;
                 }
+
+                // Add a small delay between proxy requests to prevent Brawlytix from blocking the scrape session
+                await sleep(3000);
             }
 
             waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully scraped baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
