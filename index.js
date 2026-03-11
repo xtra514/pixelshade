@@ -467,8 +467,7 @@ client.on('messageCreate', async message => {
 
         let desc = '';
         sorted.slice(0, 5).forEach((member, i) => {
-            const skillStr = member.currentSkill ? `| \`${member.currentSkill}\` Skill` : '';
-            desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo ${skillStr}\n`;
+            desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo\n`;
         });
 
         embed.setDescription(desc);
@@ -477,6 +476,42 @@ client.on('messageCreate', async message => {
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('show_all_rank')
+                .setLabel('Show All (30)')
+                .setStyle(ButtonStyle.Primary)
+        );
+
+        message.reply({ embeds: [embed], components: [row] });
+        return;
+    }
+
+    if (commandName === '!skill') {
+        const data = tracker.getTrackingData();
+        if (!data.isEloTracking || !data.eloMembers) {
+            return message.reply('❌ Automated Tracking has not been started. Use `!start-elo` first.');
+        }
+
+        const sorted = data.eloMembers
+            .filter(m => m.currentSkill !== null)
+            .sort((a, b) => b.currentSkill - a.currentSkill);
+
+        if (sorted.length === 0) return message.reply('❌ No Skill Score data available yet.');
+
+        const embed = new EmbedBuilder()
+            .setColor('#00FFFF')
+            .setTitle('🎯 Live Skill Score Leaderboard')
+            .setTimestamp();
+
+        let desc = '';
+        sorted.slice(0, 5).forEach((member, i) => {
+            desc += `**${i + 1}.** ${member.name}: \`${member.currentSkill}\` / 10\n`;
+        });
+
+        embed.setDescription(desc);
+
+        // Add "Show All" Button
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('show_all_skill')
                 .setLabel('Show All (30)')
                 .setStyle(ButtonStyle.Primary)
         );
@@ -771,8 +806,30 @@ client.on('interactionCreate', async interaction => {
 
             let desc = '';
             sorted.forEach((member, i) => {
-                const skillStr = member.currentSkill ? `| \`${member.currentSkill}\` Skill` : '';
-                desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo ${skillStr}\n`;
+                desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo\n`;
+            });
+
+            embed.setDescription(desc);
+            await interaction.editReply({ content: null, embeds: [embed], components: [] });
+        }
+
+        if (interaction.customId === 'show_all_skill') {
+            if (!data.isEloTracking || !data.eloMembers) {
+                return interaction.editReply({ content: '❌ Tracking is not active.', embeds: [], components: [] });
+            }
+
+            const sorted = data.eloMembers
+                .filter(m => m.currentSkill !== null)
+                .sort((a, b) => b.currentSkill - a.currentSkill);
+
+            const embed = new EmbedBuilder()
+                .setColor('#00FFFF')
+                .setTitle('🎯 Full Skill Score Leaderboard')
+                .setTimestamp();
+
+            let desc = '';
+            sorted.forEach((member, i) => {
+                desc += `**${i + 1}.** ${member.name}: \`${member.currentSkill}\` / 10\n`;
             });
 
             embed.setDescription(desc);
