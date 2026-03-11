@@ -680,14 +680,16 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ Tracking data is not available.', ephemeral: true });
     }
 
+    let isDeferred = false;
     try {
         console.log(`[Interaction] Received button click: ${interaction.customId}`);
         try {
             await interaction.deferUpdate(); // Acknowledge the click so it doesn't fail
             console.log(`[Interaction] deferUpdate successful`);
+            isDeferred = true;
         } catch (deferError) {
             console.error(`[Interaction] deferUpdate failed: ${deferError.message}`);
-            return; // Exit early if deferUpdate failed (e.g. user double-clicked)
+            // Do not return. We will try to send a new message instead of editing the old one.
         }
 
         if (interaction.customId === 'show_all_trophies') {
@@ -718,7 +720,11 @@ client.on('interactionCreate', async interaction => {
             });
 
             embed.setDescription(description);
-            await interaction.editReply({ embeds: [embed], components: [] }); // Remove the button
+            if (isDeferred) {
+                await interaction.editReply({ embeds: [embed], components: [] }).catch(e => console.error('editReply catch:', e.message));
+            } else {
+                await interaction.reply({ embeds: [embed], ephemeral: true }).catch(e => console.error('reply catch:', e.message));
+            }
         }
 
         if (interaction.customId === 'show_all_grind') {
@@ -793,7 +799,11 @@ client.on('interactionCreate', async interaction => {
             });
 
             embed.setDescription(description);
-            await interaction.editReply({ embeds: [embed], components: [] }); // Remove the button
+            if (isDeferred) {
+                await interaction.editReply({ embeds: [embed], components: [] }).catch(e => console.error('editReply catch:', e.message));
+            } else {
+                await interaction.reply({ embeds: [embed], ephemeral: true }).catch(e => console.error('reply catch:', e.message));
+            }
         }
 
         if (interaction.customId === 'show_all_rank') {
@@ -816,7 +826,11 @@ client.on('interactionCreate', async interaction => {
             });
 
             embed.setDescription(desc);
-            await interaction.editReply({ embeds: [embed], components: [] });
+            if (isDeferred) {
+                await interaction.editReply({ embeds: [embed], components: [] }).catch(e => console.error('editReply catch:', e.message));
+            } else {
+                await interaction.reply({ embeds: [embed], ephemeral: true }).catch(e => console.error('reply catch:', e.message));
+            }
         }
 
         if (interaction.customId === 'show_all_skill') {
@@ -839,7 +853,11 @@ client.on('interactionCreate', async interaction => {
             });
 
             embed.setDescription(desc);
-            await interaction.editReply({ embeds: [embed], components: [] });
+            if (isDeferred) {
+                await interaction.editReply({ embeds: [embed], components: [] }).catch(e => console.error('editReply catch:', e.message));
+            } else {
+                await interaction.reply({ embeds: [embed], ephemeral: true }).catch(e => console.error('reply catch:', e.message));
+            }
         }
 
     } catch (error) {
