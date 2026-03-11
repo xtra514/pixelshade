@@ -448,7 +448,7 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    if (commandName === '!elo-leaderboard') {
+    if (commandName === '!rank') {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) {
             return message.reply('❌ Automated Elo Tracking has not been started. Use `!start-elo` first.');
