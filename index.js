@@ -86,13 +86,13 @@ client.once('clientReady', () => {
                         await sleep(10000); // Server Sync Buffer
 
                         // Targeted proxy request to Brawlytix to get exact new Elo
-                        const newElo = await queueScrape(member.tag);
-                        if (newElo !== null) {
-                            tracker.updateEloForMember(member.tag, newElo, latestRanked.battleTime);
-                            console.log(`Successfully updated ${member.name} Elo to ${newElo}`);
+                        const scrapeData = await queueScrape(member.tag);
+                        if (scrapeData !== null) {
+                            tracker.updateEloForMember(member.tag, scrapeData.elo, scrapeData.skill, latestRanked.battleTime);
+                            console.log(`Successfully updated ${member.name} Elo to ${scrapeData.elo} and Skill to ${scrapeData.skill}`);
                         } else {
                             // Failed to scrape (timeout), but mark battle as seen so we don't spam it later
-                            tracker.updateEloForMember(member.tag, null, latestRanked.battleTime);
+                            tracker.updateEloForMember(member.tag, null, null, latestRanked.battleTime);
                         }
 
                         // CRITICAL: Prevent 409 Concurrent Limit errors on Free Tier if 2+ people finish games at the same time
@@ -428,9 +428,9 @@ client.on('messageCreate', async message => {
                 }
 
                 // Instead of using queueScrape, we already hold the master bot lock for this loop
-                const elo = await scrapeRankedElo(member.tag);
-                if (elo !== null) {
-                    tracker.updateEloForMember(member.tag, elo, lastTime);
+                const scrapeData = await scrapeRankedElo(member.tag);
+                if (scrapeData !== null) {
+                    tracker.updateEloForMember(member.tag, scrapeData.elo, scrapeData.skill, lastTime);
                     successes++;
 
                     // Live Feedback on Discord
@@ -467,7 +467,8 @@ client.on('messageCreate', async message => {
 
         let desc = '';
         sorted.slice(0, 5).forEach((member, i) => {
-            desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo\n`;
+            const skillStr = member.currentSkill ? `| \`${member.currentSkill}\` Skill` : '';
+            desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo ${skillStr}\n`;
         });
 
         embed.setDescription(desc);
@@ -490,10 +491,11 @@ client.on('messageCreate', async message => {
 
         try {
             const waitMsg = await message.reply('⏳ Getting into queue... Bypassing Cloudflare and scraping Brawlytix (may take 10-15 seconds)');
-            const elo = await queueScrape(tag);
+            const scrapeData = await queueScrape(tag);
 
-            if (elo !== null) {
-                await waitMsg.edit(`✅ **Player ${tag}** has an exact Ranked Elo of: **${elo.toLocaleString()}** 🏆`);
+            if (scrapeData !== null) {
+                const skillStr = scrapeData.skill ? ` | Skill: **${scrapeData.skill}**` : '';
+                await waitMsg.edit(`✅ **Player ${tag}** has an exact Ranked Elo of: **${scrapeData.elo.toLocaleString()}** 🏆${skillStr}`);
             } else {
                 await waitMsg.edit(`❌ Could not find Ranked Elo for ${tag}. This either means they haven't played Ranked mode, or the scraper timed out.`);
             }
@@ -769,7 +771,8 @@ client.on('interactionCreate', async interaction => {
 
             let desc = '';
             sorted.forEach((member, i) => {
-                desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo\n`;
+                const skillStr = member.currentSkill ? `| \`${member.currentSkill}\` Skill` : '';
+                desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo ${skillStr}\n`;
             });
 
             embed.setDescription(desc);

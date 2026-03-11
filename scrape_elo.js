@@ -45,17 +45,29 @@ async function scrapeRankedElo(tag) {
             html = response.body;
         }
 
-        // Brawlytix HTML structure: 6,405 <label>Ranked Elo</label>
+        // Brawlytix HTML structure format:
+        // Elo: 6,405 <label>Ranked Elo</label>
+        // Skill: <h2>Skill Score</h2>... <h2>6.3 / 10</h2>
         const eloMatch = html.match(/([\d,]+)\s*<label[^>]*>Ranked Elo<\/label>/i);
+        const skillMatch = html.match(/<h2>Skill Score<\/h2>[\s\S]*?<h2[^>]*>([\d.]+)\s*\/\s*10<\/h2>/i);
+
+        let result = { elo: null, skill: null };
 
         if (eloMatch && eloMatch[1]) {
-            const elo = parseInt(eloMatch[1].replace(/,/g, ''), 10);
-            console.log(`Extracted Elo: ${elo}`);
-            return elo;
+            result.elo = parseInt(eloMatch[1].replace(/,/g, ''), 10);
+            console.log(`Extracted Elo: ${result.elo}`);
+        } else {
+            console.log('Ranked Elo stat block not found in HTML.');
         }
 
-        console.log('Ranked Elo stat block not found in HTML.');
-        return null;
+        if (skillMatch && skillMatch[1]) {
+            result.skill = parseFloat(skillMatch[1]);
+            console.log(`Extracted Skill Score: ${result.skill}`);
+        } else {
+            console.log('Skill Score stat block not found in HTML.');
+        }
+
+        return (result.elo || result.skill) ? result : null;
 
     } catch (e) {
         console.error('Cloudscraper Error:', e.message || e);

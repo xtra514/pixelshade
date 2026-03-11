@@ -88,8 +88,9 @@ function startEloTracking(currentMembers) {
         return {
             tag: member.tag,
             name: member.name,
-            currentElo: existing ? existing.currentElo : null,
-            lastBattleTime: existing ? existing.lastBattleTime : null
+            currentElo: existing && existing.currentElo !== undefined ? existing.currentElo : null,
+            currentSkill: existing && existing.currentSkill !== undefined ? existing.currentSkill : null,
+            lastBattleTime: existing && existing.lastBattleTime !== undefined ? existing.lastBattleTime : null
         };
     });
 
@@ -100,14 +101,15 @@ function startEloTracking(currentMembers) {
 /**
  * Updates a specific member's Elo and last Battle timestamp in the database
  */
-function updateEloForMember(tag, newElo, battleTime) {
+function updateEloForMember(tag, newElo, newSkill, battleTime) {
     const data = loadData();
     if (!data.eloMembers) return false;
 
     const memberIndex = data.eloMembers.findIndex(m => m.tag === tag);
     if (memberIndex !== -1) {
-        if (newElo !== null) data.eloMembers[memberIndex].currentElo = newElo;
-        if (battleTime !== null) data.eloMembers[memberIndex].lastBattleTime = battleTime;
+        if (newElo !== null && newElo !== undefined) data.eloMembers[memberIndex].currentElo = newElo;
+        if (newSkill !== null && newSkill !== undefined) data.eloMembers[memberIndex].currentSkill = newSkill;
+        if (battleTime !== null && battleTime !== undefined) data.eloMembers[memberIndex].lastBattleTime = battleTime;
         saveData(data);
         return true;
     }
