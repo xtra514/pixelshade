@@ -3,18 +3,21 @@ async function scrapeRankedElo(tag) {
         const cleanTag = tag.replace('#', '');
         console.log(`Scraping Elo for ${cleanTag} via got-scraping...`);
 
-        // Dynamically import got-scraping since it's an ES Module
-        const { gotScraping } = await import('got-scraping');
-
-        let response;
+        let html;
         if (process.env.SCRAPINGANT_KEY) {
             console.log(`Using ScrapingAnt API for Elo scrape...`);
-            const scrapingAntUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(`https://brawlytix.com/profile/${cleanTag}`)}&x-api-key=${process.env.SCRAPINGANT_KEY}`;
-            response = await gotScraping({ url: scrapingAntUrl });
+            const scrapingAntUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(`https://brawlytix.com/profile/${cleanTag}`)}&x-api-key=${process.env.SCRAPINGANT_KEY}&browser=false`;
+
+            // Raw axios request directly to the API, omitting got-scraping's TLS spoofers
+            const axios = require('axios');
+            const res = await axios.get(scrapingAntUrl, { timeout: 20000 }); // 20-second proxy timeout
+            html = res.data;
         } else {
             console.log(`Using CORSProxy API (Will fail on Render)...`);
             const urlToScrape = `https://brawlytix.com/profile/${cleanTag}`;
-            response = await gotScraping({
+            // Dynamically import got-scraping since it's an ES Module
+            const { gotScraping } = await import('got-scraping');
+            const response = await gotScraping({
                 url: `https://corsproxy.io/?${encodeURIComponent(urlToScrape)}`,
                 headerGeneratorOptions: {
                     browsers: [{ name: 'chrome', minVersion: 110 }],
@@ -22,9 +25,8 @@ async function scrapeRankedElo(tag) {
                     locales: ['en-US']
                 }
             });
+            html = response.body;
         }
-
-        const html = response.body;
 
         // Brawlytix HTML structure: 6,405 <label>Ranked Elo</label>
         const eloMatch = html.match(/([\d,]+)\s*<label[^>]*>Ranked Elo<\/label>/i);
