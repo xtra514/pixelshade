@@ -56,29 +56,14 @@ const client = new Client({
     }
 });
 
+// Enable verbose debug logging to catch connection hanging on Render
+client.on('debug', console.log);
+
 // When the client is ready, run this code (only once)
 client.once('clientReady', () => {
     console.log(`Ready! Logged in as ${client.user.tag}`);
 
     // Automated Ranked Elo Tracker
-    global.isScraping = false;
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-    // Global Scrape Queue to ensure ScrapingAnt NEVER gets 2 concurrent requests
-    async function queueScrape(tag) {
-        while (global.isScraping) {
-            await sleep(1000); // Wait in line
-        }
-        global.isScraping = true;
-        try {
-            const elo = await scrapeRankedElo(tag);
-            return elo;
-        } finally {
-            await sleep(3500); // Mandatory cooldown before releasing the lock for the next person
-            global.isScraping = false;
-        }
-    }
-
     setInterval(async () => {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) return;
@@ -124,6 +109,24 @@ client.once('clientReady', () => {
 
 // Enable verbose debug logging to catch connection hanging on Render
 client.on('debug', console.log);
+
+// Global Scrape Queue logic
+global.isScraping = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function queueScrape(tag) {
+    while (global.isScraping) {
+        await sleep(1000); // Wait in line
+    }
+    global.isScraping = true;
+    try {
+        const elo = await scrapeRankedElo(tag);
+        return elo;
+    } finally {
+        await sleep(3500); // Mandatory cooldown before releasing the lock
+        global.isScraping = false;
+    }
+}
 
 // Listen for messages
 client.on('messageCreate', async message => {
@@ -409,7 +412,6 @@ client.on('messageCreate', async message => {
 
             // Do an initial loop to grab current Elo for everyone immediately
             let successes = 0;
-            const sleep = ms => new Promise(r => setTimeout(r, ms));
 
             for (const member of eloMembers) {
                 const logs = await brawlAPI.getBattlelog(member.tag);
