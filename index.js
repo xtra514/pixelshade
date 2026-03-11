@@ -467,7 +467,7 @@ client.on('messageCreate', async message => {
 
         let desc = '';
         sorted.forEach((member, i) => {
-            desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` points\n`;
+            desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo\n`;
         });
 
         embed.setDescription(desc);
