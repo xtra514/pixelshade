@@ -64,15 +64,24 @@ client.once('clientReady', () => {
     global.isScraping = false;
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+    // Global Scrape Queue to ensure ScrapingAnt NEVER gets 2 concurrent requests
+    async function queueScrape(tag) {
+        while (global.isScraping) {
+            await sleep(1000); // Wait in line
+        }
+        global.isScraping = true;
+        try {
+            const elo = await scrapeRankedElo(tag);
+            return elo;
+        } finally {
+            await sleep(3500); // Mandatory cooldown before releasing the lock for the next person
+            global.isScraping = false;
+        }
+    }
+
     setInterval(async () => {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) return;
-        if (global.isScraping) {
-            console.log("Skipping tracker interval: Previous scrape queue is still running.");
-            return;
-        }
-
-        global.isScraping = true;
 
         try {
             console.log("Checking Battlelogs for Ranked Elo updates...");
@@ -91,7 +100,7 @@ client.once('clientReady', () => {
                         console.log(`New Ranked match detected for ${member.name}. Triggering ScrapingAnt Proxy...`);
 
                         // Targeted proxy request to Brawlytix to get exact new Elo
-                        const newElo = await scrapeRankedElo(member.tag);
+                        const newElo = await queueScrape(member.tag);
                         if (newElo !== null) {
                             tracker.updateEloForMember(member.tag, newElo, latestRanked.battleTime);
                             console.log(`Successfully updated ${member.name} Elo to ${newElo}`);
@@ -107,8 +116,8 @@ client.once('clientReady', () => {
                     console.error(`Background Tracker Error for ${member.name}:`, e.message);
                 }
             }
-        } finally {
-            global.isScraping = false; // Release the lock
+        } catch (error) {
+            console.error(error);
         }
     }, 2 * 60 * 1000); // Run every 2 minutes
 });
@@ -389,11 +398,6 @@ client.on('messageCreate', async message => {
         const clubTag = process.env.CLUB_TAG;
         if (!clubTag) return message.reply('❌ CLUB_TAG is not set in the .env file.');
 
-        if (global.isScraping) {
-            return message.reply('⏳ **A scrape session is currently active.** Please wait a few minutes before trying again.');
-        }
-        global.isScraping = true;
-
         try {
             const waitMsg = await message.reply('⏳ **Initializing Automated Elo Tracker...**\nFetching current members and performing a baseline bulk proxy scrape (may take a minute or two)...');
 
@@ -415,14 +419,11 @@ client.on('messageCreate', async message => {
                     if (latest) lastTime = latest.battleTime;
                 }
 
-                const elo = await scrapeRankedElo(member.tag);
+                const elo = await queueScrape(member.tag);
                 if (elo !== null) {
                     tracker.updateEloForMember(member.tag, elo, lastTime);
                     successes++;
                 }
-
-                // Add a small delay between proxy requests to prevent Brawlytix from blocking the scrape session
-                await sleep(4000);
             }
 
             waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully scraped baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
@@ -466,8 +467,8 @@ client.on('messageCreate', async message => {
         if (!tag) return message.reply('❌ Please provide a player tag. Example: `!elo #PUP09U9Q`');
 
         try {
-            const waitMsg = await message.reply('⏳ Bypassing Cloudflare and scraping Brawlytix for exact Ranked Elo... (may take 10-15 seconds)');
-            const elo = await scrapeRankedElo(tag);
+            const waitMsg = await message.reply('⏳ Getting into queue... Bypassing Cloudflare and scraping Brawlytix (may take 10-15 seconds)');
+            const elo = await queueScrape(tag);
 
             if (elo !== null) {
                 await waitMsg.edit(`✅ **Player ${tag}** has an exact Ranked Elo of: **${elo.toLocaleString()}** 🏆`);
