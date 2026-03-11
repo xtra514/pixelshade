@@ -31,7 +31,10 @@ function saveData(data) {
  * We now deep clone their entire brawler roster so we can compare individual Brawler gains later.
  */
 function startTracking(currentMembers) {
+    const existingData = loadData();
+
     const trackingData = {
+        ...existingData,
         isTracking: true,
         startTime: new Date().toISOString(),
         members: currentMembers.map(member => {
