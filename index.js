@@ -451,7 +451,7 @@ client.on('messageCreate', async message => {
     if (commandName === '!rank') {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) {
-            return message.reply('❌ Automated Elo Tracking has not been started. Use `!start-elo` first.');
+            return message.reply('❌ **Brawlytix Database Empty.** \nAutomated tracking for Ranked Elo & Skill has not been started yet. Please use `!start-elo` first to initiate the bulk Brawlytix scrape!');
         }
 
         const sorted = data.eloMembers
@@ -487,7 +487,7 @@ client.on('messageCreate', async message => {
     if (commandName === '!skill-track') {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) {
-            return message.reply('❌ Automated Tracking has not been started. Use `!start-elo` first.');
+            return message.reply('❌ **Brawlytix Database Empty.** \nSkill Scores are tracked automatically via Brawlytix, but the database is currently empty. Please use `!start-elo` first to trigger the bulk scraper!');
         }
 
         const sorted = data.eloMembers
@@ -682,7 +682,11 @@ client.on('interactionCreate', async interaction => {
     }
 
     try {
-        await interaction.deferUpdate(); // Acknowledge the click so it doesn't fail
+        try {
+            await interaction.deferUpdate(); // Acknowledge the click so it doesn't fail
+        } catch (deferError) {
+            console.warn("Could not defer interaction, it may have expired.");
+        }
 
         if (interaction.customId === 'show_all_trophies') {
             const results = [];
