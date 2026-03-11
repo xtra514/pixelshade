@@ -484,7 +484,7 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    if (commandName === '!skill-track') {
+    if (commandName === '!skill') {
         const data = tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) {
             return message.reply('❌ **Brawlytix Database Empty.** \nSkill Scores are tracked automatically via Brawlytix, but the database is currently empty. Please use `!start-elo` first to trigger the bulk scraper!');
