@@ -82,7 +82,8 @@ client.once('clientReady', () => {
 
                     // If this is a new ranked match they just played
                     if (!member.lastBattleTime || latestRanked.battleTime > member.lastBattleTime) {
-                        console.log(`New Ranked match detected for ${member.name}. Triggering ScrapingAnt Proxy...`);
+                        console.log(`New Ranked match detected for ${member.name}. Waiting 10s for Brawlytix to sync...`);
+                        await sleep(10000); // Server Sync Buffer
 
                         // Targeted proxy request to Brawlytix to get exact new Elo
                         const newElo = await queueScrape(member.tag);
