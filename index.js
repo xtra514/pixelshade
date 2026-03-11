@@ -147,7 +147,7 @@ client.on('messageCreate', async message => {
         if (!isOwner(message)) return message.reply('❌ Only the bot owner can use the master killswitch.');
         if (global.botPaused) return message.reply('⚠️ **The bot is already stopped.**');
         global.botPaused = true;
-        return message.reply('🛑 **MASTER KILLSWITCH ENGAGED** 🛑\nAll bot commands, background tracking, and Brawlytix scraping have been completely halted.\nType `!start-bot` to resume normal operations.');
+        return message.reply('🛑 **MASTER KILLSWITCH ENGAGED** 🛑');
     }
 
     if (commandName === '!start-bot') {
