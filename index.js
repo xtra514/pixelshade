@@ -59,6 +59,42 @@ const client = new Client({
 // When the client is ready, run this code (only once)
 client.once('clientReady', () => {
     console.log(`Ready! Logged in as ${client.user.tag}`);
+
+    // Automated Ranked Elo Tracker
+    setInterval(async () => {
+        const data = tracker.getTrackingData();
+        if (!data.isEloTracking || !data.eloMembers) return;
+
+        console.log("Checking Battlelogs for Ranked Elo updates...");
+        for (const member of data.eloMembers) {
+            try {
+                // Fetch recent battles (free & unlimited)
+                const logs = await brawlAPI.getBattlelog(member.tag);
+                if (!logs || logs.length === 0) continue;
+
+                // Find latest ranked match chronologically
+                const latestRanked = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked' || l.battle.type === 'ranked');
+                if (!latestRanked) continue;
+
+                // If this is a new ranked match they just played
+                if (!member.lastBattleTime || latestRanked.battleTime > member.lastBattleTime) {
+                    console.log(`New Ranked match detected for ${member.name}. Triggering ScrapingAnt Proxy...`);
+
+                    // Targeted proxy request to Brawlytix to get exact new Elo
+                    const newElo = await scrapeRankedElo(member.tag);
+                    if (newElo !== null) {
+                        tracker.updateEloForMember(member.tag, newElo, latestRanked.battleTime);
+                        console.log(`Successfully updated ${member.name} Elo to ${newElo}`);
+                    } else {
+                        // Failed to scrape (timeout), but mark battle as seen so we don't spam it later
+                        tracker.updateEloForMember(member.tag, null, latestRanked.battleTime);
+                    }
+                }
+            } catch (e) {
+                console.error(`Background Tracker Error for ${member.name}:`, e.message);
+            }
+        }
+    }, 2 * 60 * 1000); // Run every 2 minutes
 });
 
 // Enable verbose debug logging to catch connection hanging on Render
@@ -328,6 +364,71 @@ client.on('messageCreate', async message => {
             )
             .setFooter({ text: 'Grind hard.' });
 
+        message.reply({ embeds: [embed] });
+        return;
+    }
+
+    if (commandName === '!start-elo') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
+        const clubTag = process.env.CLUB_TAG;
+        if (!clubTag) return message.reply('❌ CLUB_TAG is not set in the .env file.');
+
+        try {
+            const waitMsg = await message.reply('⏳ **Initializing Automated Elo Tracker...**\nFetching current members and performing a baseline bulk proxy scrape (may take a minute or two)...');
+
+            const members = await brawlAPI.getClubMembers(clubTag);
+            if (!members || members.length === 0) return waitMsg.edit('❌ Cannot find club members.');
+
+            // Store baseline
+            const eloMembers = tracker.startEloTracking(members);
+
+            // Do an initial loop to grab current Elo for everyone immediately
+            let successes = 0;
+            for (const member of eloMembers) {
+                const logs = await brawlAPI.getBattlelog(member.tag);
+                let lastTime = null;
+                if (logs && logs.length > 0) {
+                    const latest = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked' || l.battle.type === 'ranked');
+                    if (latest) lastTime = latest.battleTime;
+                }
+
+                const elo = await scrapeRankedElo(member.tag);
+                if (elo !== null) {
+                    tracker.updateEloForMember(member.tag, elo, lastTime);
+                    successes++;
+                }
+            }
+
+            waitMsg.edit(`✅ **Automated Elo Tracking Started!**\nSuccessfully scraped baselines for **${successes}/${members.length}** members.\nThe bot will now silently monitor battle logs every 2 minutes and automatically update Elo when someone plays Ranked.`);
+        } catch (error) {
+            message.reply(`❌ ${error.message}`);
+        }
+        return;
+    }
+
+    if (commandName === '!elo-leaderboard') {
+        const data = tracker.getTrackingData();
+        if (!data.isEloTracking || !data.eloMembers) {
+            return message.reply('❌ Automated Elo Tracking has not been started. Use `!start-elo` first.');
+        }
+
+        const sorted = data.eloMembers
+            .filter(m => m.currentElo !== null)
+            .sort((a, b) => b.currentElo - a.currentElo);
+
+        if (sorted.length === 0) return message.reply('❌ No Ranked data available yet.');
+
+        const embed = new EmbedBuilder()
+            .setColor('#E91E63')
+            .setTitle('🏆 Live Ranked Elo Leaderboard')
+            .setTimestamp();
+
+        let desc = '';
+        sorted.forEach((member, i) => {
+            desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` points\n`;
+        });
+
+        embed.setDescription(desc);
         message.reply({ embeds: [embed] });
         return;
     }

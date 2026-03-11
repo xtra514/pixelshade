@@ -70,8 +70,62 @@ function endTracking() {
     saveData(data);
 }
 
+/**
+ * Initializes Elo Tracking
+ */
+function startEloTracking(currentMembers) {
+    const data = loadData();
+    data.isEloTracking = true;
+
+    // Merge or create Elo members map
+    const existingEloMembers = data.eloMembers || [];
+
+    data.eloMembers = currentMembers.map(member => {
+        const existing = existingEloMembers.find(m => m.tag === member.tag);
+        return {
+            tag: member.tag,
+            name: member.name,
+            currentElo: existing ? existing.currentElo : null,
+            lastBattleTime: existing ? existing.lastBattleTime : null
+        };
+    });
+
+    saveData(data);
+    return data.eloMembers;
+}
+
+/**
+ * Updates a specific member's Elo and last Battle timestamp in the database
+ */
+function updateEloForMember(tag, newElo, battleTime) {
+    const data = loadData();
+    if (!data.eloMembers) return false;
+
+    const memberIndex = data.eloMembers.findIndex(m => m.tag === tag);
+    if (memberIndex !== -1) {
+        if (newElo !== null) data.eloMembers[memberIndex].currentElo = newElo;
+        if (battleTime !== null) data.eloMembers[memberIndex].lastBattleTime = battleTime;
+        saveData(data);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Disables Elo Tracking
+ */
+function endEloTracking() {
+    const data = loadData();
+    data.isEloTracking = false;
+    saveData(data);
+}
+
 module.exports = {
     startTracking,
     getTrackingData,
-    endTracking
+    endTracking,
+    loadData,
+    startEloTracking,
+    updateEloForMember,
+    endEloTracking
 };

@@ -6,15 +6,23 @@ async function scrapeRankedElo(tag) {
         // Dynamically import got-scraping since it's an ES Module
         const { gotScraping } = await import('got-scraping');
 
-        const urlToScrape = `https://brawlytix.com/profile/${cleanTag}`;
-        const response = await gotScraping({
-            url: `https://corsproxy.io/?${encodeURIComponent(urlToScrape)}`,
-            headerGeneratorOptions: {
-                browsers: [{ name: 'chrome', minVersion: 110 }],
-                devices: ['desktop'],
-                locales: ['en-US']
-            }
-        });
+        let response;
+        if (process.env.SCRAPINGANT_KEY) {
+            console.log(`Using ScrapingAnt API for Elo scrape...`);
+            const scrapingAntUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(`https://brawlytix.com/profile/${cleanTag}`)}&x-api-key=${process.env.SCRAPINGANT_KEY}`;
+            response = await gotScraping({ url: scrapingAntUrl });
+        } else {
+            console.log(`Using CORSProxy API (Will fail on Render)...`);
+            const urlToScrape = `https://brawlytix.com/profile/${cleanTag}`;
+            response = await gotScraping({
+                url: `https://corsproxy.io/?${encodeURIComponent(urlToScrape)}`,
+                headerGeneratorOptions: {
+                    browsers: [{ name: 'chrome', minVersion: 110 }],
+                    devices: ['desktop'],
+                    locales: ['en-US']
+                }
+            });
+        }
 
         const html = response.body;
 
