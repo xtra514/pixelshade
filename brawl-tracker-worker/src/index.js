@@ -98,9 +98,9 @@ async function processBattlelogs(env) {
                     console.log(`[${member.tag}] Defeat with brawler ${myBrawler.id} (${myBrawler.name}) - ${myBrawler.trophies} Trophies.`);
                     if (myBrawler.trophies <= 1000) {
                         lossCount++;
-                        if (lossCount >= 3) {
+                        if (lossCount >= 2) {
                             exploitArmed = true;
-                            console.log(`[${member.tag}] 🚨 Trap armed! 3+ losses reached. Next win <= 1999 will be flagged as a bot match exploit.`);
+                            console.log(`[${member.tag}] 🚨 Trap armed! 2+ losses reached. Next win <= 1999 will be flagged as a bot match exploit.`);
                         } else {
                             console.log(`[${member.tag}] 📉 Loss count is now ${lossCount}.`);
                         }
