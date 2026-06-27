@@ -140,18 +140,24 @@ async function processBattlelogs(env) {
                         dirty = true;
                         console.log(`[${member.tag}] 🚨 BOT EXPLOIT CAUGHT! Stripped ${gained} Grind Points from ${myBrawler.name}.`);
                         
+                        const discordToken = env.DISCORD_TOKEN ? env.DISCORD_TOKEN.trim() : null;
+                        const alertChannelId = env.ALERT_CHANNEL_ID ? env.ALERT_CHANNEL_ID.trim() : null;
+
                         // Send Alert to Discord
-                        if (env.DISCORD_TOKEN && env.ALERT_CHANNEL_ID) {
+                        if (discordToken && alertChannelId) {
                             const alertMsg = `🚨 **BOT EXPLOIT DETECTED** 🚨\nPlayer **${member.name}** (\`${member.tag}\`) was caught attempting to farm bot matches using \`${myBrawler.name}\`!\n💥 **Stripped ${gained} Grind Points** from their score!`;
                             try {
-                                await fetch(`https://discord.com/api/v10/channels/${env.ALERT_CHANNEL_ID}/messages`, {
+                                const discordRes = await fetch(`https://discord.com/api/v10/channels/${alertChannelId}/messages`, {
                                     method: 'POST',
                                     headers: {
-                                        'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+                                        'Authorization': `Bot ${discordToken}`,
                                         'Content-Type': 'application/json'
                                     },
                                     body: JSON.stringify({ content: alertMsg })
                                 });
+                                if (!discordRes.ok) {
+                                    console.error('Discord API rejected message:', discordRes.status, await discordRes.text());
+                                }
                             } catch (e) {
                                 console.error('Failed to send Discord alert:', e);
                             }
