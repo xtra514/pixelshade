@@ -821,6 +821,11 @@ client.on('interactionCreate', async interaction => {
 
                             totalGrindPoints += prestigeBonus;
                         }
+
+                        // Subtract any exploited bot matches
+                        if (baseBrawler && baseBrawler.illegitimate) {
+                            totalGrindPoints -= baseBrawler.illegitimate;
+                        }
                     });
                     results.push({ name: baseline.name, grindPoints: Math.floor(totalGrindPoints) });
                 }
