@@ -91,8 +91,18 @@ async function processBattlelogs(env) {
                     continue;
                 }
 
-                const isLoss = (log.battle.result === 'defeat' || (log.battle.trophyChange !== undefined && log.battle.trophyChange < 0));
-                const isWin = (log.battle.result === 'victory' || (log.battle.trophyChange !== undefined && log.battle.trophyChange > 0));
+                let isLoss = (log.battle.result === 'defeat' || (log.battle.trophyChange !== undefined && log.battle.trophyChange < 0));
+                let isWin = (log.battle.result === 'victory' || (log.battle.trophyChange !== undefined && log.battle.trophyChange > 0));
+
+                if (log.battle.rank !== undefined) {
+                    if (log.battle.mode === 'soloShowdown') {
+                        if (log.battle.rank > 5) isLoss = true;
+                        else if (log.battle.rank < 5) isWin = true;
+                    } else if (log.battle.mode === 'duoShowdown') {
+                        if (log.battle.rank > 3) isLoss = true;
+                        else if (log.battle.rank < 3) isWin = true;
+                    }
+                }
 
                 if (isLoss) {
                     console.log(`[${member.tag}] Defeat with brawler ${myBrawler.id} (${myBrawler.name}) - ${myBrawler.trophies} Trophies.`);

@@ -1,44 +1,97 @@
-import dotenv from 'dotenv';
-dotenv.config();
+const fs = require('fs');
 
-const API_URL = 'https://bsproxy.royaleapi.dev/v1';
+async function test() {
+    require('dotenv').config({ path: 'D:/Projects/PixelShade/brawl-tracker-worker/.dev.vars' });
 
-async function checkTags() {
-    const tags = ['#99VGJCGJU', '#YG9UR2C8V', '#892GQ2YY9', '#PUP09U9Q', '#LY2LL9L'];
+    const tag = '%2399VGJCGJU'; // #99VGJCGJU
+    const res = await fetch(`https://bsproxy.royaleapi.dev/v1/players/${tag}/battlelog`, {
+        headers: {
+            'Authorization': `Bearer ${process.env.BRAWL_API_TOKEN}`,
+            'Accept': 'application/json'
+        }
+    });
     
-    for (const tag of tags) {
-        const cleanTag = tag.replace('#', '%23');
-        try {
-            const res = await fetch(`${API_URL}/players/${cleanTag}/battlelog`, {
-                headers: { 'Authorization': `Bearer ${process.env.BRAWL_API_TOKEN}` }
-            });
-            const data = await res.json();
-            if (!data.items) {
-                console.log(`No items for ${tag}`, data);
-                continue;
-            }
-            console.log(`\n=== TAG: ${tag} ===`);
-            // Check the first 5 matches
-            for (let i = 0; i < Math.min(5, data.items.length); i++) {
-                const log = data.items[i];
-                let myBrawler = null;
-                // find brawler in teams or players
-                if (log.battle.teams) {
-                    for (const team of log.battle.teams) {
-                        const me = team.find(p => p.tag === tag);
-                        if (me) myBrawler = me.brawler;
-                    }
-                } else if (log.battle.players) {
-                    const me = log.battle.players.find(p => p.tag === tag);
-                    if (me) myBrawler = me.brawler;
+    if (!res.ok) {
+        console.error("Failed to fetch", res.status);
+        return;
+    }
+    const logData = await res.json();
+    const logs = logData.items;
+
+    const sortedLogs = logs
+        .filter(l => l.battleTime)
+        .sort((a, b) => a.battleTime.localeCompare(b.battleTime));
+
+    let lossCount = 0;
+    let exploitArmed = false;
+
+    console.log(`Processing ${sortedLogs.length} matches...`);
+
+    for (const log of sortedLogs) {
+        let myBrawler = null;
+        if (log.battle.teams) {
+            for (const team of log.battle.teams) {
+                for (const p of team) {
+                    if (p.tag === '#99VGJCGJU') myBrawler = p.brawler;
                 }
-                const isWin = (log.battle.result === 'victory' || (log.battle.rank && log.battle.rank <= 4));
-                const isLoss = (log.battle.result === 'defeat' || (log.battle.rank && log.battle.rank > 4));
-                console.log(`${log.battleTime} - ${myBrawler ? myBrawler.name : 'Unknown'} - ${isWin ? 'WIN' : (isLoss ? 'LOSS' : 'DRAW')} - Trophies: ${myBrawler ? myBrawler.trophies : '?'}`);
             }
-        } catch (e) {
-            console.error(e);
+        } else if (log.battle.players) {
+            for (const p of log.battle.players) {
+                if (p.tag === '#99VGJCGJU') myBrawler = p.brawler;
+            }
+        }
+
+        if (!myBrawler) continue;
+
+        if (log.battle.type !== 'ranked') {
+            console.log(`Skipping non-trophy match (type: ${log.battle.type})`);
+            continue;
+        }
+
+        let isLoss = (log.battle.result === 'defeat' || (log.battle.trophyChange !== undefined && log.battle.trophyChange < 0));
+        let isWin = (log.battle.result === 'victory' || (log.battle.trophyChange !== undefined && log.battle.trophyChange > 0));
+
+        if (log.battle.rank !== undefined) {
+            if (log.battle.mode === 'soloShowdown') {
+                if (log.battle.rank > 5) isLoss = true;
+                else if (log.battle.rank < 5) isWin = true;
+            } else if (log.battle.mode === 'duoShowdown') {
+                if (log.battle.rank > 3) isLoss = true;
+                else if (log.battle.rank < 3) isWin = true;
+            }
+        }
+
+        console.log(`\nMatch at ${log.battleTime} | Brawler: ${myBrawler.name} | Trophies: ${myBrawler.trophies} | Result: ${log.battle.result} | TrophyChange: ${log.battle.trophyChange} | Mode: ${log.battle.mode} | Rank: ${log.battle.rank}`);
+        
+        if (isLoss) {
+            console.log(`Defeat with brawler ${myBrawler.id} (${myBrawler.name}) - ${myBrawler.trophies} Trophies.`);
+            if (myBrawler.trophies <= 1000) {
+                lossCount++;
+                if (lossCount >= 2) {
+                    exploitArmed = true;
+                    console.log(`🚨 Trap armed! 2+ losses reached.`);
+                } else {
+                    console.log(`📉 Loss count is now ${lossCount}.`);
+                }
+            } else if (myBrawler.trophies % 1000 === 0) {
+                console.log(`⏸️ Loss on Prestige Floor (${myBrawler.trophies}). Streak preserved.`);
+            } else {
+                lossCount = 0;
+                exploitArmed = false;
+                console.log(`❌ Trophies > 1000 and not on floor. Resetting all exploit state.`);
+            }
+        } else if (isWin) {
+            console.log(`Victory with brawler ${myBrawler.id} (${myBrawler.name}) - ${myBrawler.trophies} Trophies.`);
+            if (exploitArmed && myBrawler.trophies <= 1999) {
+                console.log(`🚨 BOT EXPLOIT CAUGHT!`);
+            } else {
+                console.log(`🛑 Win streak cleared (Normal win).`);
+            }
+            lossCount = 0;
+            exploitArmed = false;
+        } else {
+            console.log("NEITHER WIN NOR LOSS? isLoss=", isLoss, "isWin=", isWin);
         }
     }
 }
-checkTags();
+test();
