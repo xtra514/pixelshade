@@ -8,7 +8,7 @@ const express = require('express');
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const brawlAPI = require('./brawlAPI');
 const tracker = require('./tracker');
-const { scrapeRankedElo } = require('./scrape_elo');
+
 
 const app = express();
 app.get('/', (req, res) => {
@@ -66,7 +66,7 @@ client.once('clientReady', () => {
     // Automated Ranked Elo Tracker
     setInterval(async () => {
         if (global.botPaused) return; // Halt background polling if killswitch is active
-        const data = tracker.getTrackingData();
+        const data = await tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) return;
 
         try {
@@ -208,7 +208,7 @@ client.on('messageCreate', async message => {
 
             const validProfiles = fullProfiles.filter(p => p !== null);
 
-            tracker.startTracking(validProfiles);
+            await tracker.startTracking(validProfiles);
             message.reply(`✅ Started tracking **${validProfiles.length}** members from club **${clubTag}**!`);
         } catch (error) {
             message.reply(`❌ ${error.message}`);
@@ -217,7 +217,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!trophies') {
-        const data = tracker.getTrackingData();
+        const data = await tracker.getTrackingData();
         if (!data.isTracking) {
             return message.reply('❌ Tracking has not been started. Use `!start-tracking` first.');
         }
@@ -273,7 +273,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!grind') {
-        const data = tracker.getTrackingData();
+        const data = await tracker.getTrackingData();
         if (!data.isTracking) {
             return message.reply('❌ Tracking has not been started. Use `!start-tracking` first.');
         }
@@ -338,6 +338,11 @@ client.on('messageCreate', async message => {
 
                             totalGrindPoints += prestigeBonus;
                         }
+
+                        // Subtract any exploited bot matches
+                        if (baseBrawler && baseBrawler.illegitimate) {
+                            totalGrindPoints -= baseBrawler.illegitimate;
+                        }
                     });
 
                     results.push({
@@ -385,8 +390,21 @@ client.on('messageCreate', async message => {
 
     if (commandName === '!end-tracking') {
         if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
-        tracker.endTracking();
+        await tracker.endTracking();
         message.reply('🛑 Tracking has been stopped. Use `!start-tracking` when a new season begins.');
+        return;
+    }
+
+    if (commandName === '!clear-tracking') {
+        if (!isOwner(message)) return message.reply('❌ Only the bot owner can use this command.');
+        
+        const waitMsg = await message.reply('⏳ Clearing all tracking data from the database...');
+        try {
+            await tracker.clearTracking();
+            await waitMsg.edit('✅ Database has been completely cleared.');
+        } catch (error) {
+            await waitMsg.edit(`❌ Failed to clear database: ${error.message}`);
+        }
         return;
     }
 
@@ -472,7 +490,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!rank') {
-        const data = tracker.getTrackingData();
+        const data = await tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) {
             return message.reply('❌ **Global Database Empty.** \nAutomated tracking for Ranked Elo & Skill has not been started yet. Please use `!start-elo` first to initiate the global database sync!');
         }
@@ -508,7 +526,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!skill') {
-        const data = tracker.getTrackingData();
+        const data = await tracker.getTrackingData();
         if (!data.isEloTracking || !data.eloMembers) {
             return message.reply('❌ **Global Database Empty.** \nSkill Scores are tracked automatically, but the database is currently empty. Please use `!start-elo` first to trigger the bulk sync!');
         }
@@ -700,7 +718,7 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
     if (global.botPaused) return; // Ignore buttons if bot is stopped
 
-    const data = tracker.getTrackingData();
+    const data = await tracker.getTrackingData();
     if (!data) {
         return interaction.reply({ content: '❌ Tracking data is not available.', ephemeral: true });
     }
