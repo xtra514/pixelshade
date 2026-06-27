@@ -141,10 +141,10 @@ async function processBattlelogs(env) {
                         console.log(`[${member.tag}] 🚨 BOT EXPLOIT CAUGHT! Stripped ${gained} Grind Points from ${myBrawler.name}.`);
                         
                         // Send Alert to Discord
-                        if (env.DISCORD_TOKEN && env.ILLUMINATI_CHANNEL_ID) {
+                        if (env.DISCORD_TOKEN && env.ALERT_CHANNEL_ID) {
                             const alertMsg = `🚨 **BOT EXPLOIT DETECTED** 🚨\nPlayer **${member.name}** (\`${member.tag}\`) was caught attempting to farm bot matches using \`${myBrawler.name}\`!\n💥 **Stripped ${gained} Grind Points** from their score!`;
                             try {
-                                await fetch(`https://discord.com/api/v10/channels/${env.ILLUMINATI_CHANNEL_ID}/messages`, {
+                                await fetch(`https://discord.com/api/v10/channels/${env.ALERT_CHANNEL_ID}/messages`, {
                                     method: 'POST',
                                     headers: {
                                         'Authorization': `Bot ${env.DISCORD_TOKEN}`,
