@@ -133,6 +133,34 @@ async function clearTracking() {
     }).eq('id', 1);
 }
 
+async function addPlayer(member) {
+    const baselineBrawlers = member.brawlers ? member.brawlers.map(b => ({
+        id: b.id,
+        name: b.name,
+        trophies: b.trophies,
+        illegitimate: 0
+    })) : [];
+
+    const memberToInsert = {
+        tag: member.tag,
+        name: member.name,
+        baseline_trophies: member.trophies,
+        brawlers: baselineBrawlers
+    };
+
+    const { error } = await supabase.from('club_members').upsert(memberToInsert, { onConflict: 'tag' });
+    if(error) console.error("Supabase upsert error (addPlayer):", error.message);
+    
+    return await getTrackingData();
+}
+
+async function removePlayer(tag) {
+    const { error } = await supabase.from('club_members').delete().eq('tag', tag);
+    if(error) console.error("Supabase delete error (removePlayer):", error.message);
+    
+    return await getTrackingData();
+}
+
 function chunkArray(array, size) {
     const chunked = [];
     for (let i = 0; i < array.length; i += size) {
@@ -148,5 +176,7 @@ module.exports = {
     startEloTracking,
     updateEloForMember,
     endEloTracking,
-    clearTracking
+    clearTracking,
+    addPlayer,
+    removePlayer
 };

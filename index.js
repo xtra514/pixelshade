@@ -216,6 +216,63 @@ client.on('messageCreate', async message => {
         return;
     }
 
+    if (commandName === '!add-player') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
+        if (!args[1]) return message.reply('❌ Please provide a player tag. Example: `!add-player #TAG`');
+        
+        let tag = args[1].toUpperCase();
+        if (!tag.startsWith('#')) tag = '#' + tag;
+
+        try {
+            const currentData = await tracker.getTrackingData();
+            if (!currentData.isTracking) {
+                return message.reply('❌ Tracking has not been started. Use `!start-tracking` first.');
+            }
+
+            if (currentData.members.some(m => m.tag === tag)) {
+                return message.reply(`⚠️ Player **${tag}** is already being tracked.`);
+            }
+
+            const waitMsg = await message.reply(`⏳ Fetching profile for **${tag}**...`);
+            const playerProfile = await brawlAPI.getPlayer(tag);
+            
+            if (!playerProfile) {
+                return waitMsg.edit(`❌ Could not fetch profile for **${tag}**. Make sure the tag is correct.`);
+            }
+
+            await tracker.addPlayer(playerProfile);
+            await waitMsg.edit(`✅ Added **${playerProfile.name}** (${tag}) to the tracking database!`);
+        } catch (error) {
+            message.reply(`❌ ${error.message}`);
+        }
+        return;
+    }
+
+    if (commandName === '!remove-player') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
+        if (!args[1]) return message.reply('❌ Please provide a player tag. Example: `!remove-player #TAG`');
+        
+        let tag = args[1].toUpperCase();
+        if (!tag.startsWith('#')) tag = '#' + tag;
+
+        try {
+            const currentData = await tracker.getTrackingData();
+            if (!currentData.isTracking) {
+                return message.reply('❌ Tracking has not been started. Use `!start-tracking` first.');
+            }
+
+            if (!currentData.members.some(m => m.tag === tag)) {
+                return message.reply(`⚠️ Player **${tag}** is not currently being tracked.`);
+            }
+
+            await tracker.removePlayer(tag);
+            message.reply(`✅ Removed **${tag}** from the tracking database.`);
+        } catch (error) {
+            message.reply(`❌ ${error.message}`);
+        }
+        return;
+    }
+
     if (commandName === '!trophies') {
         const data = await tracker.getTrackingData();
         if (!data.isTracking) {
