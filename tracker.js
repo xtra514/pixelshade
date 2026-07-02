@@ -161,6 +161,25 @@ async function removePlayer(tag) {
     return await getTrackingData();
 }
 
+async function adjustGrind(tag, amount) {
+    const { data, error } = await supabase.from('club_members').select('brawlers').eq('tag', tag).single();
+    if (error || !data) throw new Error("Could not find player in tracking database.");
+    
+    let brawlers = data.brawlers || [];
+    let stateObj = brawlers.find(b => b.id === -1);
+    if (!stateObj) {
+        stateObj = { id: -1, lossCount: 0, exploitArmed: false, grindAdjustment: 0 };
+        brawlers.push(stateObj);
+    }
+    
+    stateObj.grindAdjustment = (stateObj.grindAdjustment || 0) + amount;
+    
+    const { error: updateError } = await supabase.from('club_members').update({ brawlers }).eq('tag', tag);
+    if (updateError) throw new Error("Database update failed.");
+    
+    return stateObj.grindAdjustment;
+}
+
 function chunkArray(array, size) {
     const chunked = [];
     for (let i = 0; i < array.length; i += size) {
@@ -178,5 +197,6 @@ module.exports = {
     endEloTracking,
     clearTracking,
     addPlayer,
-    removePlayer
+    removePlayer,
+    adjustGrind
 };

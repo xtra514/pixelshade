@@ -273,6 +273,42 @@ client.on('messageCreate', async message => {
         return;
     }
 
+    if (commandName === '!give' && args[1] && args[1].toLowerCase() === 'grind') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
+        const amount = parseInt(args[2]);
+        if (isNaN(amount) || amount <= 0) return message.reply('❌ Please provide a valid positive amount. Example: `!give grind 400 #TAG`');
+        let tag = args[3];
+        if (!tag) return message.reply('❌ Please provide a player tag. Example: `!give grind 400 #TAG`');
+        tag = tag.toUpperCase();
+        if (!tag.startsWith('#')) tag = '#' + tag;
+
+        try {
+            const newAdj = await tracker.adjustGrind(tag, amount);
+            message.reply(`✅ Gave **${amount}** grind points to **${tag}**. (Total manual adjustment is now: ${newAdj})`);
+        } catch (error) {
+            message.reply(`❌ ${error.message}`);
+        }
+        return;
+    }
+
+    if (commandName === '!remove' && args[1] && args[1].toLowerCase() === 'grind') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
+        const amount = parseInt(args[2]);
+        if (isNaN(amount) || amount <= 0) return message.reply('❌ Please provide a valid positive amount. Example: `!remove grind 400 #TAG`');
+        let tag = args[3];
+        if (!tag) return message.reply('❌ Please provide a player tag. Example: `!remove grind 400 #TAG`');
+        tag = tag.toUpperCase();
+        if (!tag.startsWith('#')) tag = '#' + tag;
+
+        try {
+            const newAdj = await tracker.adjustGrind(tag, -amount);
+            message.reply(`✅ Removed **${amount}** grind points from **${tag}**. (Total manual adjustment is now: ${newAdj})`);
+        } catch (error) {
+            message.reply(`❌ ${error.message}`);
+        }
+        return;
+    }
+
     if (commandName === '!trophies') {
         const data = await tracker.getTrackingData();
         if (!data.isTracking) {
@@ -401,6 +437,12 @@ client.on('messageCreate', async message => {
                             totalGrindPoints -= baseBrawler.illegitimate;
                         }
                     });
+
+                    // Add manual adjustments
+                    const stateObj = baseline.brawlers ? baseline.brawlers.find(b => b.id === -1) : null;
+                    if (stateObj && stateObj.grindAdjustment) {
+                        totalGrindPoints += stateObj.grindAdjustment;
+                    }
 
                     results.push({
                         name: baseline.name,
@@ -884,6 +926,13 @@ client.on('interactionCreate', async interaction => {
                             totalGrindPoints -= baseBrawler.illegitimate;
                         }
                     });
+
+                    // Add manual adjustments
+                    const stateObj = baseline.brawlers ? baseline.brawlers.find(b => b.id === -1) : null;
+                    if (stateObj && stateObj.grindAdjustment) {
+                        totalGrindPoints += stateObj.grindAdjustment;
+                    }
+
                     results.push({ name: baseline.name, grindPoints: Math.floor(totalGrindPoints) });
                 }
             });
