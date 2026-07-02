@@ -310,6 +310,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!grind-info') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         if (!args[1]) return message.reply('❌ Please provide a player tag. Example: `!grind-info #TAG`');
         let tag = args[1].toUpperCase();
         if (!tag.startsWith('#')) tag = '#' + tag;
@@ -411,6 +412,7 @@ client.on('messageCreate', async message => {
     }
 
     if (commandName === '!grind-audits' || commandName === '!grind-logs' || commandName === '!grind-adjustments') {
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         try {
             const data = await tracker.getTrackingData();
             if (!data.isTracking) {
