@@ -410,6 +410,66 @@ client.on('messageCreate', async message => {
         return;
     }
 
+    if (commandName === '!grind-audits' || commandName === '!grind-logs' || commandName === '!grind-adjustments') {
+        try {
+            const data = await tracker.getTrackingData();
+            if (!data.isTracking) {
+                return message.reply('❌ Tracking has not been started. Use `!start-tracking` first.');
+            }
+
+            let auditList = [];
+
+            data.members.forEach(member => {
+                let botPenalties = 0;
+                let manualAdjustment = 0;
+
+                if (member.brawlers) {
+                    member.brawlers.forEach(brawler => {
+                        if (brawler.id === -1 && brawler.grindAdjustment) {
+                            manualAdjustment = brawler.grindAdjustment;
+                        } else if (brawler.illegitimate) {
+                            botPenalties += brawler.illegitimate;
+                        }
+                    });
+                }
+
+                if (botPenalties > 0 || manualAdjustment !== 0) {
+                    auditList.push({
+                        name: member.name,
+                        tag: member.tag,
+                        botPenalties,
+                        manualAdjustment
+                    });
+                }
+            });
+
+            if (auditList.length === 0) {
+                return message.reply('✅ No players have any point buffs, nerfs, or bot penalties.');
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor('#FF00FF')
+                .setTitle('⚖️ Grind Point Adjustments')
+                .setTimestamp();
+
+            let desc = 'List of all players with modified grind points.\n\n';
+            auditList.forEach(player => {
+                let botStr = player.botPenalties > 0 ? `🤖 Bot Penalty: \`-${player.botPenalties}\`` : '';
+                let manualStr = player.manualAdjustment !== 0 ? `🛠️ Manual: \`${player.manualAdjustment > 0 ? '+' : ''}${player.manualAdjustment}\`` : '';
+                
+                let details = [botStr, manualStr].filter(Boolean).join(' | ');
+                desc += `**${player.name}** (\`${player.tag}\`)\n↳ ${details}\n\n`;
+            });
+
+            embed.setDescription(desc);
+            await message.reply({ embeds: [embed] });
+
+        } catch (error) {
+            message.reply(`❌ ${error.message}`);
+        }
+        return;
+    }
+
     if (commandName === '!trophies') {
         const data = await tracker.getTrackingData();
         if (!data.isTracking) {
