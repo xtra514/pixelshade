@@ -309,6 +309,107 @@ client.on('messageCreate', async message => {
         return;
     }
 
+    if (commandName === '!grind-info') {
+        if (!args[1]) return message.reply('❌ Please provide a player tag. Example: `!grind-info #TAG`');
+        let tag = args[1].toUpperCase();
+        if (!tag.startsWith('#')) tag = '#' + tag;
+
+        try {
+            const data = await tracker.getTrackingData();
+            if (!data.isTracking) {
+                return message.reply('❌ Tracking has not been started. Use `!start-tracking` first.');
+            }
+
+            const baseline = data.members.find(m => m.tag === tag);
+            if (!baseline) {
+                return message.reply(`❌ Player **${tag}** is not currently in the tracking database.`);
+            }
+
+            const waitMsg = await message.reply(`⏳ Fetching breakdown for **${tag}**...`);
+            const currentMember = await brawlAPI.getPlayer(tag);
+
+            if (!currentMember || !currentMember.brawlers) {
+                return waitMsg.edit(`❌ Could not fetch live data for **${tag}**.`);
+            }
+
+            let basePoints = 0;
+            let botPenalties = 0;
+
+            currentMember.brawlers.forEach(currentBrawler => {
+                const baseBrawler = baseline.brawlers ? baseline.brawlers.find(b => b.id === currentBrawler.id) : null;
+                const baselineTrophies = baseBrawler ? baseBrawler.trophies : 0;
+                const trophiesGained = currentBrawler.trophies - baselineTrophies;
+
+                if (trophiesGained > 0) {
+                    const brackets = [
+                        { min: 0, max: 999, mult: 0.5 },
+                        { min: 1000, max: 1999, mult: 1.0 },
+                        { min: 2000, max: 2499, mult: 3.0 },
+                        { min: 2500, max: 2699, mult: 6.0 },
+                        { min: 2700, max: 2999, mult: 12.0 },
+                        { min: 3000, max: 3099, mult: 25.0 },
+                        { min: 3100, max: 3499, mult: 50.0 },
+                        { min: 3500, max: 3999, mult: 75.0 },
+                        { min: 4000, max: Infinity, mult: 100.0 }
+                    ];
+
+                    let tempPoints = 0;
+                    let currentTrophies = baselineTrophies;
+                    const targetTrophies = currentBrawler.trophies;
+
+                    for (const bracket of brackets) {
+                        if (currentTrophies > bracket.max) continue;
+                        if (currentTrophies >= targetTrophies) break;
+
+                        const endOfBracket = Math.min(targetTrophies, bracket.max + 1);
+                        const trophiesInBracket = endOfBracket - currentTrophies;
+
+                        tempPoints += (trophiesInBracket * bracket.mult);
+                        currentTrophies = endOfBracket;
+                    }
+
+                    basePoints += tempPoints;
+
+                    let prestigeBonus = 0;
+                    if (baselineTrophies < 1000 && currentBrawler.trophies >= 1000) prestigeBonus += 100;
+                    if (baselineTrophies < 2000 && currentBrawler.trophies >= 2000) prestigeBonus += 500;
+                    if (baselineTrophies < 3000 && currentBrawler.trophies >= 3000) prestigeBonus += 2000;
+                    if (baselineTrophies < 4000 && currentBrawler.trophies >= 4000) prestigeBonus += 10000;
+                    if (baselineTrophies < 5000 && currentBrawler.trophies >= 5000) prestigeBonus += 15000;
+
+                    basePoints += prestigeBonus;
+                }
+
+                if (baseBrawler && baseBrawler.illegitimate) {
+                    botPenalties += baseBrawler.illegitimate;
+                }
+            });
+
+            const stateObj = baseline.brawlers ? baseline.brawlers.find(b => b.id === -1) : null;
+            const manualAdjustment = stateObj && stateObj.grindAdjustment ? stateObj.grindAdjustment : 0;
+
+            const finalPoints = Math.floor(basePoints) - botPenalties + manualAdjustment;
+
+            const embed = new EmbedBuilder()
+                .setColor('#00FFFF')
+                .setTitle(`📊 Grind Info: ${currentMember.name}`)
+                .setDescription(`Detailed breakdown of Grind Points for \`${tag}\``)
+                .addFields(
+                    { name: 'Raw Base Points', value: `\`+${Math.floor(basePoints)}\``, inline: true },
+                    { name: 'Bot Penalties', value: botPenalties > 0 ? `\`-${botPenalties}\`` : '\`0\`', inline: true },
+                    { name: 'Manual Adjustments', value: manualAdjustment !== 0 ? (manualAdjustment > 0 ? `\`+${manualAdjustment}\`` : `\`${manualAdjustment}\``) : '\`0\`', inline: true },
+                    { name: 'Final Grind Points', value: `**${finalPoints}**`, inline: false }
+                )
+                .setTimestamp();
+
+            await waitMsg.edit({ content: null, embeds: [embed] });
+
+        } catch (error) {
+            message.reply(`❌ ${error.message}`);
+        }
+        return;
+    }
+
     if (commandName === '!trophies') {
         const data = await tracker.getTrackingData();
         if (!data.isTracking) {
