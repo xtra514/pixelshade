@@ -192,6 +192,40 @@ client.on('messageCreate', async message => {
         }
     }
 
+    if (commandName === '!phelp') {
+        const embed = new EmbedBuilder()
+            .setColor('#3498DB')
+            .setTitle('🤖 Pixel Shade Bot Commands')
+            .setDescription('Here is a list of all available commands.')
+            .addFields(
+                {
+                    name: '🎮 Public Commands',
+                    value: '`!grind` - Show the Grind Points Leaderboard\n`!trophies` - Show the raw Trophy Gains Leaderboard\n`!elo` or `!skill` - Show the Ranked Elo Leaderboard\n`!phelp` - Show this help menu'
+                }
+            );
+
+        if (hasPermission(message)) {
+            embed.addFields(
+                {
+                    name: '🛡️ Moderator Commands',
+                    value: '`!start-tracking` - Start tracking all club members\n`!end-tracking` - Pause/stop tracking\n`!start-elo` - Start tracking ranked elo\n`!end-elo` - Pause/stop tracking elo\n`!clear-tracking` - Wipe tracking data entirely\n`!add-player #TAG` - Add a specific player to tracking\n`!remove-player #TAG` - Remove a player from tracking\n`!give grind <amount> #TAG` - Manually give grind points\n`!remove grind <amount> #TAG` - Manually remove grind points\n`!grind-info #TAG` - View breakdown of points/penalties for a player\n`!grind-audits` - View all players with manual points or bot penalties'
+                }
+            );
+        }
+
+        if (isOwner(message)) {
+            embed.addFields(
+                {
+                    name: '👑 Owner Commands',
+                    value: '`!add-mod @user` - Add a bot moderator\n`!remove-mod @user` - Remove a bot moderator\n`!stop-bot` - Engage the master killswitch\n`!start-bot` - Resume bot operations'
+                }
+            );
+        }
+
+        embed.setTimestamp();
+        return message.reply({ embeds: [embed] });
+    }
+
     if (commandName === '!start-tracking') {
         if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         const clubTag = process.env.CLUB_TAG;
