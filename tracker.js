@@ -1,7 +1,29 @@
-require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
+const config = require('./config');
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabase = createClient(config.supabaseUrl, config.supabaseKey, {
+    auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        persistSession: false
+    }
+});
+
+let warnedAboutLegacyAdjustment = false;
+
+function throwOnDatabaseError(error, context) {
+    if (!error) return;
+    const wrapped = new Error(`${context}: ${error.message}`);
+    wrapped.cause = error;
+    throw wrapped;
+}
+
+function isUnavailablePrivilegedFunction(error) {
+    const publishableKeyCannotExecute = error?.code === '42501'
+        && (config.supabaseKeyType === 'publishable' || config.supabaseKeyType === 'legacy-anon');
+    return error?.code === 'PGRST202'
+        || publishableKeyCannotExecute;
+}
 
 /**
  * Loads the tracking data from Supabase
@@ -9,16 +31,14 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
  */
 async function getTrackingData() {
     const { data: stateData, error: stateError } = await supabase.from('global_state').select('*').eq('id', 1).single();
-    if (stateError) {
-        console.error("Error fetching global_state:", stateError.message);
-        return { isTracking: false, members: [] };
-    }
+    throwOnDatabaseError(stateError, 'Could not fetch global tracking state');
 
     let members = [];
     let eloMembers = [];
 
     const { data: memberData, error: memberError } = await supabase.from('club_members').select('*');
-    if (!memberError && memberData) {
+    throwOnDatabaseError(memberError, 'Could not fetch club members');
+    if (memberData) {
         if (stateData.is_grind_tracking) {
             members = memberData.map(m => ({
                 tag: m.tag,
@@ -54,11 +74,6 @@ async function getTrackingData() {
  */
 async function startTracking(currentMembers) {
     const now = new Date().toISOString();
-    
-    await supabase.from('global_state').update({
-        is_grind_tracking: true,
-        start_time: now
-    }).eq('id', 1);
 
     const membersToInsert = currentMembers.map(member => {
         const baselineBrawlers = member.brawlers ? member.brawlers.map(b => ({
@@ -72,35 +87,56 @@ async function startTracking(currentMembers) {
             tag: member.tag,
             name: member.name,
             baseline_trophies: member.trophies,
-            brawlers: baselineBrawlers
+            brawlers: baselineBrawlers,
+            last_battle_time: null
         };
     });
 
-    for (const batch of chunkArray(membersToInsert, 10)) {
-        const { error } = await supabase.from('club_members').upsert(batch, { onConflict: 'tag' });
-        if(error) console.error("Supabase upsert error:", error.message);
+    const { error: atomicError } = await supabase.rpc('start_tracking_atomic', {
+        p_members: membersToInsert,
+        p_started_at: now
+    });
+    if (!atomicError) return getTrackingData();
+    if (!isUnavailablePrivilegedFunction(atomicError)) {
+        throwOnDatabaseError(atomicError, 'Could not start tracking atomically');
     }
 
-    return await getTrackingData();
+    for (const batch of chunkArray(membersToInsert, 10)) {
+        const { error } = await supabase.from('club_members').upsert(batch, { onConflict: 'tag' });
+        throwOnDatabaseError(error, 'Could not save tracking baselines');
+    }
+
+    const { error: stateError } = await supabase.from('global_state').update({
+        is_grind_tracking: true,
+        start_time: now
+    }).eq('id', 1);
+    throwOnDatabaseError(stateError, 'Could not activate Grind tracking');
+
+    return getTrackingData();
 }
 
 /**
  * Ends the tracking period
  */
 async function endTracking() {
-    await supabase.from('global_state').update({ is_grind_tracking: false }).eq('id', 1);
+    const { error } = await supabase.from('global_state').update({ is_grind_tracking: false }).eq('id', 1);
+    throwOnDatabaseError(error, 'Could not stop Grind tracking');
 }
 
 /**
  * Initializes Elo Tracking
  */
 async function startEloTracking(currentMembers) {
-    await supabase.from('global_state').update({ is_elo_tracking: true }).eq('id', 1);
-    
     // Ensure all members exist in the DB without overwriting their existing Elo
     for (const member of currentMembers) {
-        await supabase.from('club_members').upsert({ tag: member.tag, name: member.name }, { onConflict: 'tag', ignoreDuplicates: true });
+        const { error } = await supabase
+            .from('club_members')
+            .upsert({ tag: member.tag, name: member.name }, { onConflict: 'tag', ignoreDuplicates: true });
+        throwOnDatabaseError(error, `Could not save Elo member ${member.tag}`);
     }
+
+    const { error: stateError } = await supabase.from('global_state').update({ is_elo_tracking: true }).eq('id', 1);
+    throwOnDatabaseError(stateError, 'Could not activate Elo tracking');
 
     const data = await getTrackingData();
     return data.eloMembers;
@@ -113,24 +149,16 @@ async function updateEloForMember(tag, newElo, newSkill, battleTime) {
     if (battleTime !== null && battleTime !== undefined) updates.last_battle_time = battleTime;
     
     if (Object.keys(updates).length > 0) {
-        await supabase.from('club_members').update(updates).eq('tag', tag);
+        const { error } = await supabase.from('club_members').update(updates).eq('tag', tag);
+        throwOnDatabaseError(error, `Could not update Elo for ${tag}`);
         return true;
     }
     return false;
 }
 
 async function endEloTracking() {
-    await supabase.from('global_state').update({ is_elo_tracking: false }).eq('id', 1);
-}
-
-async function clearTracking() {
-    // Delete all rows safely by matching where tag is not null
-    await supabase.from('club_members').delete().not('tag', 'is', null);
-    await supabase.from('global_state').update({
-        is_grind_tracking: false,
-        is_elo_tracking: false,
-        start_time: null
-    }).eq('id', 1);
+    const { error } = await supabase.from('global_state').update({ is_elo_tracking: false }).eq('id', 1);
+    throwOnDatabaseError(error, 'Could not stop Elo tracking');
 }
 
 async function addPlayer(member) {
@@ -145,25 +173,52 @@ async function addPlayer(member) {
         tag: member.tag,
         name: member.name,
         baseline_trophies: member.trophies,
-        brawlers: baselineBrawlers
+        brawlers: baselineBrawlers,
+        last_battle_time: null
     };
 
+    const { error: atomicError } = await supabase.rpc('upsert_grind_member_atomic', {
+        p_member: memberToInsert
+    });
+    if (!atomicError) return getTrackingData();
+    if (!isUnavailablePrivilegedFunction(atomicError)) {
+        throwOnDatabaseError(atomicError, `Could not add player ${member.tag} atomically`);
+    }
+
     const { error } = await supabase.from('club_members').upsert(memberToInsert, { onConflict: 'tag' });
-    if(error) console.error("Supabase upsert error (addPlayer):", error.message);
+    throwOnDatabaseError(error, `Could not add player ${member.tag}`);
     
-    return await getTrackingData();
+    return getTrackingData();
 }
 
 async function removePlayer(tag) {
     const { error } = await supabase.from('club_members').delete().eq('tag', tag);
-    if(error) console.error("Supabase delete error (removePlayer):", error.message);
+    throwOnDatabaseError(error, `Could not remove player ${tag}`);
     
-    return await getTrackingData();
+    return getTrackingData();
 }
 
 async function adjustGrind(tag, amount) {
+    const { data: atomicResult, error: atomicError } = await supabase.rpc('adjust_grind_atomic', {
+        p_amount: amount,
+        p_tag: tag
+    });
+
+    if (!atomicError) return Number(atomicResult);
+    if (!isUnavailablePrivilegedFunction(atomicError)) {
+        throwOnDatabaseError(atomicError, `Could not adjust Grind points for ${tag}`);
+    }
+
+    if (!warnedAboutLegacyAdjustment) {
+        warnedAboutLegacyAdjustment = true;
+        console.warn(JSON.stringify({
+            message: 'Atomic Grind adjustment function is not installed; using legacy read-modify-write fallback'
+        }));
+    }
+
     const { data, error } = await supabase.from('club_members').select('brawlers').eq('tag', tag).single();
-    if (error || !data) throw new Error("Could not find player in tracking database.");
+    throwOnDatabaseError(error, `Could not find player ${tag}`);
+    if (!data) throw new Error('Could not find player in tracking database');
     
     let brawlers = data.brawlers || [];
     let stateObj = brawlers.find(b => b.id === -1);
@@ -175,7 +230,7 @@ async function adjustGrind(tag, amount) {
     stateObj.grindAdjustment = (stateObj.grindAdjustment || 0) + amount;
     
     const { error: updateError } = await supabase.from('club_members').update({ brawlers }).eq('tag', tag);
-    if (updateError) throw new Error("Database update failed.");
+    throwOnDatabaseError(updateError, `Could not adjust Grind points for ${tag}`);
     
     return stateObj.grindAdjustment;
 }
@@ -195,7 +250,6 @@ module.exports = {
     startEloTracking,
     updateEloForMember,
     endEloTracking,
-    clearTracking,
     addPlayer,
     removePlayer,
     adjustGrind

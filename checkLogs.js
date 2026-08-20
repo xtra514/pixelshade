@@ -1,18 +1,23 @@
-const fs = require('fs');
 async function test() {
     const { createClient } = require('@supabase/supabase-js');
-    require('dotenv').config({ path: 'D:/Projects/PixelShade/brawl-tracker-worker/.dev.vars' });
+    require('dotenv').config();
 
-    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-    const { data: members } = await supabase.from('club_members').select('*');
-    if (!members) return;
+    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_KEY;
+    const brawlToken = process.env.BRAWL_STARS_TOKEN || process.env.BRAWL_API_TOKEN;
+    if (!process.env.SUPABASE_URL || !supabaseKey || !brawlToken) {
+        throw new Error('Supabase and Brawl Stars credentials are required');
+    }
+
+    const supabase = createClient(process.env.SUPABASE_URL, supabaseKey);
+    const { data: members, error } = await supabase.from('club_members').select('*');
+    if (error) throw new Error(`Could not read club members: ${error.message}`);
 
     for (const member of members) {
         const tag = member.tag.replace('#', '%23');
         let res;
         try {
             res = await fetch(`https://bsproxy.royaleapi.dev/v1/players/${tag}/battlelog`, {
-                headers: { 'Authorization': `Bearer ${process.env.BRAWL_API_TOKEN}`, 'Accept': 'application/json' }
+                headers: { 'Authorization': `Bearer ${brawlToken}`, 'Accept': 'application/json' }
             });
         } catch (e) { continue; }
         if (!res.ok) continue;
@@ -34,5 +39,8 @@ async function test() {
         }
     }
 }
-test();
+test().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+});
 
