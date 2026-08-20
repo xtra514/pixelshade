@@ -2,37 +2,57 @@
 const dns = require('node:dns');
 dns.setDefaultResultOrder('ipv4first');
 
-require('dotenv').config();
 const fs = require('fs');
+const path = require('path');
 const express = require('express');
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    Client,
+    EmbedBuilder,
+    GatewayIntentBits,
+    PermissionFlagsBits
+} = require('discord.js');
 const brawlAPI = require('./brawlAPI');
+const config = require('./config');
+const { calculateMemberGrind } = require('./domain/grind');
+const { mapWithConcurrency } = require('./lib/concurrency');
+const { createInviteTrackerService } = require('./invite-tracker/service');
 const tracker = require('./tracker');
 
-
 const app = express();
+const modsFile = path.join(__dirname, 'mods.json');
+let botPaused = false;
+let botReady = false;
+
 app.get('/', (req, res) => {
-    res.send('Bot is tracking away! I am alive.');
+    res.status(botReady ? 200 : 503).json({
+        service: 'pixelshade-bot',
+        status: botReady ? 'ready' : 'starting'
+    });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Web server listening on port ${PORT}`);
+const server = app.listen(config.port, () => {
+    console.log(JSON.stringify({ message: 'health server listening', port: config.port }));
 });
 
 function getMods() {
     try {
-        if (!fs.existsSync('./mods.json')) return [];
-        return JSON.parse(fs.readFileSync('./mods.json', 'utf8'));
-    } catch { return []; }
+        if (!fs.existsSync(modsFile)) return [];
+        return JSON.parse(fs.readFileSync(modsFile, 'utf8'));
+    } catch (error) {
+        console.error(JSON.stringify({ message: 'could not read moderators', error: error.message }));
+        return [];
+    }
 }
 function saveMods(mods) {
-    fs.writeFileSync('./mods.json', JSON.stringify(mods, null, 2));
+    fs.writeFileSync(modsFile, JSON.stringify(mods, null, 2));
 }
 
 function isOwner(message) {
     if (message.guild && message.guild.ownerId === message.author.id) return true;
-    if (process.env.OWNER_ID && message.author.id === process.env.OWNER_ID) return true;
+    if (config.ownerId && message.author.id === config.ownerId) return true;
     return false;
 }
 
@@ -46,6 +66,8 @@ function hasPermission(message) {
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildInvites,
+        GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent, // Re-enabled so your commands will work!
     ],
@@ -55,88 +77,57 @@ const client = new Client({
         }
     }
 });
+const inviteTracker = createInviteTrackerService(client);
 
-// Enable verbose debug logging to catch connection hanging on Render
-client.on('debug', console.log);
+if (config.discordDebug) {
+    client.on('debug', (message) => console.debug(JSON.stringify({ message: 'discord debug', detail: message })));
+}
 
 // When the client is ready, run this code (only once)
-client.once('clientReady', () => {
-    console.log(`Ready! Logged in as ${client.user.tag}`);
-
-    // Automated Ranked Elo Tracker
-    setInterval(async () => {
-        if (global.botPaused) return; // Halt background polling if killswitch is active
-        const data = await tracker.getTrackingData();
-        if (!data.isEloTracking || !data.eloMembers) return;
-
-        try {
-            console.log("Checking Battlelogs for Ranked Elo updates...");
-            for (const member of data.eloMembers) {
-                try {
-                    // Fetch recent battles (free & unlimited)
-                    const logs = await brawlAPI.getBattlelog(member.tag);
-                    if (!logs || logs.length === 0) continue;
-
-                    // Find latest competitive ranked match chronologically
-                    const latestRanked = logs.find(l => l.battle.type === 'soloRanked' || l.battle.type === 'teamRanked');
-                    if (!latestRanked) continue;
-
-                    // If this is a new ranked match they just played
-                    if (!member.lastBattleTime || latestRanked.battleTime > member.lastBattleTime) {
-                        console.log(`New Ranked match detected for ${member.name}. Waiting 10s for Brawlytix to sync...`);
-                        await sleep(10000); // Server Sync Buffer
-
-                        // Targeted proxy request to Brawlytix to get exact new Elo
-                        const scrapeData = await queueScrape(member.tag);
-                        if (scrapeData !== null) {
-                            tracker.updateEloForMember(member.tag, scrapeData.elo, scrapeData.skill, latestRanked.battleTime);
-                            console.log(`Successfully updated ${member.name} Elo to ${scrapeData.elo} and Skill to ${scrapeData.skill}`);
-                        } else {
-                            // Failed to scrape (timeout), but mark battle as seen so we don't spam it later
-                            tracker.updateEloForMember(member.tag, null, null, latestRanked.battleTime);
-                        }
-
-                        // CRITICAL: Prevent 409 Concurrent Limit errors on Free Tier if 2+ people finish games at the same time
-                        await sleep(1000);
-                    }
-                } catch (e) {
-                    console.error(`Background Tracker Error for ${member.name}:`, e.message);
-                }
-            }
-        } catch (error) {
-            console.error(error);
-        }
-    }, 1 * 60 * 1000); // Run every 1 minute
+client.once('clientReady', async () => {
+    try {
+        await inviteTracker.initialize();
+    } catch (error) {
+        console.error(JSON.stringify({
+            message: 'invite tracker initialization failed',
+            error: error instanceof Error ? error.message : String(error)
+        }));
+    }
+    botReady = true;
+    console.log(JSON.stringify({ message: 'discord client ready', user: client.user.tag }));
 });
 
-// Enable verbose debug logging to catch connection hanging on Render
-client.on('debug', console.log);
+client.on('guildMemberAdd', (member) => {
+    inviteTracker.handleMemberAdd(member).catch((error) => {
+        console.error(JSON.stringify({
+            message: 'invite tracker join handler failed',
+            error: error instanceof Error ? error.message : String(error),
+            guildId: member.guild.id,
+            memberId: member.id
+        }));
+    });
+});
 
-// Global Bot Pause State (Killswitch)
-global.botPaused = false;
+client.on('guildMemberRemove', (member) => {
+    inviteTracker.handleMemberRemove(member).catch((error) => {
+        console.error(JSON.stringify({
+            message: 'invite tracker leave handler failed',
+            error: error instanceof Error ? error.message : String(error),
+            guildId: member.guild.id,
+            memberId: member.id
+        }));
+    });
+});
 
-// Global Scrape Queue logic
-global.isScraping = false;
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-async function queueScrape(tag) {
-    while (global.isScraping) {
-        await sleep(1000); // Wait in line
-    }
-    global.isScraping = true;
-    try {
-        const elo = await scrapeRankedElo(tag);
-        return elo;
-    } finally {
-        await sleep(1000); // 1-second cooldown before releasing the lock
-        global.isScraping = false;
-    }
-}
+client.on('inviteCreate', (invite) => inviteTracker.handleInviteCreate(invite));
+client.on('inviteDelete', (invite) => inviteTracker.handleInviteDelete(invite));
 
 // Listen for messages
 client.on('messageCreate', async message => {
     // Ignore messages from bots to prevent infinite loops
     if (message.author.bot) return;
+
+    try {
 
     // Brawl Stars Club Tracker Commands
     const args = message.content.trim().split(/ +/);
@@ -145,20 +136,20 @@ client.on('messageCreate', async message => {
     // Owner Kill Switch Commands (Bypasses paused state)
     if (commandName === '!stop-bot') {
         if (!isOwner(message)) return message.reply('❌ Only the bot owner can use the master killswitch.');
-        if (global.botPaused) return message.reply('⚠️ **The bot is already stopped.**');
-        global.botPaused = true;
+        if (botPaused) return message.reply('⚠️ **The bot is already stopped.**');
+        botPaused = true;
         return message.reply('🛑 **MASTER KILLSWITCH ENGAGED** 🛑');
     }
 
     if (commandName === '!start-bot') {
         if (!isOwner(message)) return message.reply('❌ Only the bot owner can use the master killswitch.');
-        if (!global.botPaused) return message.reply('⚠️ **The bot is already running normally.**');
-        global.botPaused = false;
+        if (!botPaused) return message.reply('⚠️ **The bot is already running normally.**');
+        botPaused = false;
         return message.reply('✅ **SYSTEM ONLINE** ✅\nBot commands and background tracking have been re-enabled.');
     }
 
     // IF GLOBALLY PAUSED, BLOCK ALL OTHER COMMANDS
-    if (global.botPaused) {
+    if (botPaused) {
         return; // Silently ignore to prevent spam
     }
 
@@ -200,7 +191,7 @@ client.on('messageCreate', async message => {
             .addFields(
                 {
                     name: '🎮 Public Commands',
-                    value: '`!grind` - Show the Grind Points Leaderboard\n`!trophies` - Show the raw Trophy Gains Leaderboard\n`!phelp` - Show this help menu'
+                    value: '`!grind` - Show the Grind Points Leaderboard\n`!trophies` - Show the raw Trophy Gains Leaderboard\n`!invites [@user]` - Show invite statistics\n`!invite-leaderboard` - Show top inviters\n`!invite-status` - Show invite tracker status\n`!phelp` - Show this help menu'
                 }
             );
 
@@ -208,7 +199,7 @@ client.on('messageCreate', async message => {
             embed.addFields(
                 {
                     name: '🛡️ Moderator Commands',
-                    value: '`!start-tracking` - Start tracking all club members\n`!end-tracking` - Pause/stop tracking\n`!clear-tracking` - Wipe tracking data entirely\n`!add-player #TAG` - Add a specific player to tracking\n`!remove-player #TAG` - Remove a player from tracking\n`!give grind <amount> #TAG` - Manually give grind points\n`!remove grind <amount> #TAG` - Manually remove grind points\n`!grind-info #TAG` - View breakdown of points/penalties for a player\n`!grind-audits` - View all players with manual points or bot penalties'
+                    value: '`!start-tracking` - Start tracking all club members\n`!end-tracking` - Pause/stop tracking\n`!add-player #TAG` - Add a specific player to tracking\n`!remove-player #TAG` - Remove a player from tracking\n`!give grind <amount> #TAG` - Manually give grind points\n`!remove grind <amount> #TAG` - Manually remove grind points\n`!grind-info #TAG` - View breakdown of points/penalties for a player\n`!grind-audits` - View all players with manual points or bot penalties\n`!invite-setup [#channel]` - Configure invite logs\n`!invite-auto-expire on|off` - Toggle deletion of used invites\n`!invite-disable` - Disable invite tracking'
                 }
             );
         }
@@ -226,19 +217,154 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [embed] });
     }
 
+    if (commandName === '!invite-setup') {
+        if (!message.guild) return message.reply('❌ This command can only be used in a server.');
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
+
+        const channel = message.mentions.channels.first() || message.channel;
+        if (
+            channel.guildId !== message.guild.id
+            || !channel.isTextBased()
+            || channel.isThread?.()
+        ) {
+            return message.reply('❌ Choose a regular text channel in this server.');
+        }
+
+        const botMember = message.guild.members.me;
+        if (!botMember?.permissions.has(PermissionFlagsBits.ManageGuild)) {
+            return message.reply('❌ I need the **Manage Server** permission to read invite usage.');
+        }
+
+        const channelPermissions = channel.permissionsFor(botMember);
+        const requiredChannelPermissions = [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.EmbedLinks
+        ];
+        if (!channelPermissions?.has(requiredChannelPermissions)) {
+            return message.reply('❌ I need View Channel, Send Messages, and Embed Links in that channel.');
+        }
+
+        try {
+            await inviteTracker.setup(message.guild, channel.id, message.author.id);
+            return message.reply(`✅ Invite tracking is enabled in **#${channel.name}**.`);
+        } catch (error) {
+            return message.reply(`❌ ${error.message}`);
+        }
+    }
+
+    if (commandName === '!invite-disable') {
+        if (!message.guild) return message.reply('❌ This command can only be used in a server.');
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
+
+        try {
+            const disabled = await inviteTracker.disable(message.guild.id, message.author.id);
+            return message.reply(disabled
+                ? '✅ Invite tracking is disabled for this server.'
+                : '⚠️ Invite tracking was not configured for this server.');
+        } catch (error) {
+            return message.reply(`❌ ${error.message}`);
+        }
+    }
+
+    if (commandName === '!invite-status') {
+        if (!message.guild) return message.reply('❌ This command can only be used in a server.');
+
+        try {
+            const inviteConfig = await inviteTracker.getConfig(message.guild.id);
+            if (!inviteConfig?.enabled) {
+                return message.reply('ℹ️ Invite tracking is not enabled in this server.');
+            }
+            const channel = message.guild.channels.cache.get(inviteConfig.channel_id);
+            const channelName = channel?.name ? `#${channel.name}` : 'the configured channel';
+            const autoExpire = inviteConfig.auto_expire_invites ? 'on' : 'off';
+            return message.reply(
+                `✅ Invite tracking is enabled in **${channelName}**. Auto-expire is **${autoExpire}**.`
+            );
+        } catch (error) {
+            return message.reply(`❌ ${error.message}`);
+        }
+    }
+
+    if (commandName === '!invite-auto-expire') {
+        if (!message.guild) return message.reply('❌ This command can only be used in a server.');
+        if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
+
+        const setting = args[1]?.toLowerCase();
+        if (setting !== 'on' && setting !== 'off') {
+            return message.reply('❌ Use `!invite-auto-expire on` or `!invite-auto-expire off`.');
+        }
+
+        try {
+            const enabled = setting === 'on';
+            await inviteTracker.setAutoExpire(message.guild.id, enabled, message.author.id);
+            return message.reply(`✅ Invite auto-expire is now **${enabled ? 'on' : 'off'}**.`);
+        } catch (error) {
+            return message.reply(`❌ ${error.message}`);
+        }
+    }
+
+    if (commandName === '!invites') {
+        if (!message.guild) return message.reply('❌ This command can only be used in a server.');
+        const target = message.mentions.users.first() || message.author;
+
+        try {
+            const stats = await inviteTracker.getStats(message.guild.id, target.id);
+            const embed = new EmbedBuilder()
+                .setColor('#5865F2')
+                .setTitle(`Invite statistics for ${target.username}`)
+                .addFields(
+                    { name: 'Net invites', value: String(stats.netInvites), inline: true },
+                    { name: 'Joined', value: String(stats.totalInvites), inline: true },
+                    { name: 'Left', value: String(stats.leftMembers), inline: true }
+                )
+                .setFooter({ text: 'Invite links are never shown.' })
+                .setTimestamp();
+            return message.reply({ embeds: [embed] });
+        } catch (error) {
+            return message.reply(`❌ ${error.message}`);
+        }
+    }
+
+    if (commandName === '!invite-leaderboard') {
+        if (!message.guild) return message.reply('❌ This command can only be used in a server.');
+
+        try {
+            const leaderboard = await inviteTracker.getLeaderboard(message.guild.id, 10);
+            const description = leaderboard.length > 0
+                ? leaderboard.map((entry, index) => (
+                    `**${index + 1}.** <@${entry.inviterId}> — **${entry.netInvites}** net `
+                    + `(${entry.totalInvites} joined, ${entry.leftMembers} left)`
+                )).join('\n')
+                : 'No credited invites have been recorded yet.';
+            const embed = new EmbedBuilder()
+                .setColor('#FEE75C')
+                .setTitle('🏆 Invite leaderboard')
+                .setDescription(description)
+                .setFooter({ text: 'Invite links are never shown.' })
+                .setTimestamp();
+            return message.reply({
+                allowedMentions: { parse: [] },
+                embeds: [embed]
+            });
+        } catch (error) {
+            return message.reply(`❌ ${error.message}`);
+        }
+    }
+
     if (commandName === '!start-tracking') {
         if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
-        const clubTag = process.env.CLUB_TAG;
-        if (!clubTag || !process.env.BRAWL_STARS_TOKEN) {
-            return message.reply('❌ Bot is missing BRAWL_STARS_TOKEN or CLUB_TAG in .env');
-        }
+        const clubTag = config.clubTag;
 
         try {
             message.reply('⏳ Fetching full profiles for all club members (this takes a few seconds)...');
             const clubMembers = await brawlAPI.getClubMembers(clubTag);
 
-            const fetchPromises = clubMembers.map(m => brawlAPI.getPlayer(m.tag));
-            const fullProfiles = await Promise.all(fetchPromises);
+            const fullProfiles = await mapWithConcurrency(
+                clubMembers,
+                5,
+                (member) => brawlAPI.getPlayer(member.tag)
+            );
 
             const validProfiles = fullProfiles.filter(p => p !== null);
 
@@ -295,12 +421,18 @@ client.on('messageCreate', async message => {
                 return message.reply('❌ Tracking has not been started. Use `!start-tracking` first.');
             }
 
-            if (!currentData.members.some(m => m.tag === tag)) {
+            if (!currentData.members.some((member) => member.tag === tag)) {
                 return message.reply(`⚠️ Player **${tag}** is not currently being tracked.`);
             }
 
+            const waitMsg = await message.reply(`⏳ Fetching profile for **${tag}**...`);
+            const playerProfile = await brawlAPI.getPlayer(tag);
+            if (!playerProfile) {
+                return waitMsg.edit(`❌ Could not fetch profile for **${tag}**. Nothing was removed.`);
+            }
+
             await tracker.removePlayer(tag);
-            message.reply(`✅ Removed **${tag}** from the tracking database.`);
+            await waitMsg.edit(`✅ Removed **${playerProfile.name}** (${tag}) from the tracking database.`);
         } catch (error) {
             message.reply(`❌ ${error.message}`);
         }
@@ -367,73 +499,17 @@ client.on('messageCreate', async message => {
                 return waitMsg.edit(`❌ Could not fetch live data for **${tag}**.`);
             }
 
-            let basePoints = 0;
-            let botPenalties = 0;
-
-            currentMember.brawlers.forEach(currentBrawler => {
-                const baseBrawler = baseline.brawlers ? baseline.brawlers.find(b => b.id === currentBrawler.id) : null;
-                const baselineTrophies = baseBrawler ? baseBrawler.trophies : 0;
-                const trophiesGained = currentBrawler.trophies - baselineTrophies;
-
-                if (trophiesGained > 0) {
-                    const brackets = [
-                        { min: 0, max: 999, mult: 0.5 },
-                        { min: 1000, max: 1999, mult: 1.0 },
-                        { min: 2000, max: 2499, mult: 3.0 },
-                        { min: 2500, max: 2699, mult: 6.0 },
-                        { min: 2700, max: 2999, mult: 12.0 },
-                        { min: 3000, max: 3099, mult: 25.0 },
-                        { min: 3100, max: 3499, mult: 50.0 },
-                        { min: 3500, max: 3999, mult: 75.0 },
-                        { min: 4000, max: Infinity, mult: 100.0 }
-                    ];
-
-                    let tempPoints = 0;
-                    let currentTrophies = baselineTrophies;
-                    const targetTrophies = currentBrawler.trophies;
-
-                    for (const bracket of brackets) {
-                        if (currentTrophies > bracket.max) continue;
-                        if (currentTrophies >= targetTrophies) break;
-
-                        const endOfBracket = Math.min(targetTrophies, bracket.max + 1);
-                        const trophiesInBracket = endOfBracket - currentTrophies;
-
-                        tempPoints += (trophiesInBracket * bracket.mult);
-                        currentTrophies = endOfBracket;
-                    }
-
-                    basePoints += tempPoints;
-
-                    let prestigeBonus = 0;
-                    if (baselineTrophies < 1000 && currentBrawler.trophies >= 1000) prestigeBonus += 100;
-                    if (baselineTrophies < 2000 && currentBrawler.trophies >= 2000) prestigeBonus += 500;
-                    if (baselineTrophies < 3000 && currentBrawler.trophies >= 3000) prestigeBonus += 2000;
-                    if (baselineTrophies < 4000 && currentBrawler.trophies >= 4000) prestigeBonus += 10000;
-                    if (baselineTrophies < 5000 && currentBrawler.trophies >= 5000) prestigeBonus += 15000;
-
-                    basePoints += prestigeBonus;
-                }
-
-                if (baseBrawler && baseBrawler.illegitimate) {
-                    botPenalties += baseBrawler.illegitimate;
-                }
-            });
-
-            const stateObj = baseline.brawlers ? baseline.brawlers.find(b => b.id === -1) : null;
-            const manualAdjustment = stateObj && stateObj.grindAdjustment ? stateObj.grindAdjustment : 0;
-
-            const finalPoints = Math.floor(basePoints) - botPenalties + manualAdjustment;
+            const grind = calculateMemberGrind(baseline, currentMember);
 
             const embed = new EmbedBuilder()
                 .setColor('#00FFFF')
                 .setTitle(`📊 Grind Info: ${currentMember.name}`)
                 .setDescription(`Detailed breakdown of Grind Points for \`${tag}\``)
                 .addFields(
-                    { name: 'Raw Base Points', value: `\`+${Math.floor(basePoints)}\``, inline: true },
-                    { name: 'Bot Penalties', value: botPenalties > 0 ? `\`-${botPenalties}\`` : '\`0\`', inline: true },
-                    { name: 'Manual Adjustments', value: manualAdjustment !== 0 ? (manualAdjustment > 0 ? `\`+${manualAdjustment}\`` : `\`${manualAdjustment}\``) : '\`0\`', inline: true },
-                    { name: 'Final Grind Points', value: `**${finalPoints}**`, inline: false }
+                    { name: 'Raw Base Points', value: `\`+${Math.floor(grind.basePoints)}\``, inline: true },
+                    { name: 'Bot Penalties', value: grind.botPenalties > 0 ? `\`-${grind.botPenalties}\`` : '\`0\`', inline: true },
+                    { name: 'Manual Adjustments', value: grind.manualAdjustment !== 0 ? (grind.manualAdjustment > 0 ? `\`+${grind.manualAdjustment}\`` : `\`${grind.manualAdjustment}\``) : '\`0\`', inline: true },
+                    { name: 'Final Grind Points', value: `**${grind.total}**`, inline: false }
                 )
                 .setTimestamp();
 
@@ -516,7 +592,7 @@ client.on('messageCreate', async message => {
             const waitMsg = await message.reply('⏳ Fetching live stats for all members (this takes a few seconds)...');
 
             const results = [];
-            const fetchPromises = data.members.map(async (baseline) => {
+            await mapWithConcurrency(data.members, 5, async (baseline) => {
                 const currentMember = await brawlAPI.getPlayer(baseline.tag);
                 if (currentMember) {
                     const gained = currentMember.trophies - baseline.baselineTrophies;
@@ -527,8 +603,6 @@ client.on('messageCreate', async message => {
                     });
                 }
             });
-
-            await Promise.all(fetchPromises);
 
             results.sort((a, b) => b.gained - a.gained);
 
@@ -574,82 +648,17 @@ client.on('messageCreate', async message => {
             const results = [];
 
             // Re-fetch all members to compare current vs baseline Brawler stats
-            const fetchPromises = data.members.map(async (baseline) => {
+            await mapWithConcurrency(data.members, 5, async (baseline) => {
                 const currentMember = await brawlAPI.getPlayer(baseline.tag);
                 if (currentMember && currentMember.brawlers) {
-                    let totalGrindPoints = 0;
-
-                    // Compare every brawler they own
-                    currentMember.brawlers.forEach(currentBrawler => {
-                        const baseBrawler = baseline.brawlers ? baseline.brawlers.find(b => b.id === currentBrawler.id) : null;
-                        const baselineTrophies = baseBrawler ? baseBrawler.trophies : 0; // 0 if it's a brand new brawler
-
-                        // How many trophies did this specific brawler gain?
-                        const trophiesGained = currentBrawler.trophies - baselineTrophies;
-
-                        if (trophiesGained > 0) {
-                            // Apply incremental Multipliers based on Trophy Brackets
-                            const brackets = [
-                                { min: 0, max: 999, mult: 0.5 },
-                                { min: 1000, max: 1999, mult: 1.0 },
-                                { min: 2000, max: 2499, mult: 3.0 },
-                                { min: 2500, max: 2699, mult: 6.0 },
-                                { min: 2700, max: 2999, mult: 12.0 },
-                                { min: 3000, max: 3099, mult: 25.0 },
-                                { min: 3100, max: 3499, mult: 50.0 },
-                                { min: 3500, max: 3999, mult: 75.0 },
-                                { min: 4000, max: Infinity, mult: 100.0 }
-                            ];
-
-                            let tempPoints = 0;
-                            let currentTrophies = baselineTrophies;
-                            const targetTrophies = currentBrawler.trophies;
-
-                            for (const bracket of brackets) {
-                                if (currentTrophies > bracket.max) continue; // Skip brackets below current trophies
-                                if (currentTrophies >= targetTrophies) break; // Reached target
-
-                                const endOfBracket = Math.min(targetTrophies, bracket.max + 1);
-                                const trophiesInBracket = endOfBracket - currentTrophies;
-
-                                tempPoints += (trophiesInBracket * bracket.mult);
-                                currentTrophies = endOfBracket;
-                            }
-
-                            totalGrindPoints += tempPoints;
-
-                            // Add huge one-time bonus for hitting new Prestige Ranks
-                            let prestigeBonus = 0;
-                            if (baselineTrophies < 1000 && currentBrawler.trophies >= 1000) prestigeBonus += 100;
-                            if (baselineTrophies < 2000 && currentBrawler.trophies >= 2000) prestigeBonus += 500;
-                            if (baselineTrophies < 3000 && currentBrawler.trophies >= 3000) prestigeBonus += 2000;
-                            if (baselineTrophies < 4000 && currentBrawler.trophies >= 4000) prestigeBonus += 10000;
-                            if (baselineTrophies < 5000 && currentBrawler.trophies >= 5000) prestigeBonus += 15000;
-
-                            totalGrindPoints += prestigeBonus;
-                        }
-
-                        // Subtract any exploited bot matches
-                        if (baseBrawler && baseBrawler.illegitimate) {
-                            totalGrindPoints -= baseBrawler.illegitimate;
-                        }
-                    });
-
-                    // Add manual adjustments
-                    const stateObj = baseline.brawlers ? baseline.brawlers.find(b => b.id === -1) : null;
-                    if (stateObj && stateObj.grindAdjustment) {
-                        totalGrindPoints += stateObj.grindAdjustment;
-                    }
-
+                    const grind = calculateMemberGrind(baseline, currentMember);
                     results.push({
                         name: baseline.name,
-                        grindPoints: Math.floor(totalGrindPoints),
-                        rawGained: currentMember.trophies - baseline.baselineTrophies
+                        grindPoints: grind.total,
+                        rawGained: grind.rawGained
                     });
                 }
             });
-
-            await Promise.all(fetchPromises);
 
             results.sort((a, b) => b.grindPoints - a.grindPoints);
 
@@ -688,19 +697,6 @@ client.on('messageCreate', async message => {
         if (!hasPermission(message)) return message.reply('❌ You do not have permission to use this command.');
         await tracker.endTracking();
         message.reply('🛑 Tracking has been stopped. Use `!start-tracking` when a new season begins.');
-        return;
-    }
-
-    if (commandName === '!clear-tracking') {
-        if (!isOwner(message)) return message.reply('❌ Only the bot owner can use this command.');
-        
-        const waitMsg = await message.reply('⏳ Clearing all tracking data from the database...');
-        try {
-            await tracker.clearTracking();
-            await waitMsg.edit('✅ Database has been completely cleared.');
-        } catch (error) {
-            await waitMsg.edit(`❌ Failed to clear database: ${error.message}`);
-        }
         return;
     }
 
@@ -745,20 +741,28 @@ client.on('messageCreate', async message => {
         message.reply(`Hello there, ${message.author.username}!`);
         return;
     }
+    } catch (error) {
+        console.error(JSON.stringify({
+            message: 'message command failed',
+            command: message.content?.split(/ +/, 1)[0] || null,
+            error: error instanceof Error ? error.message : String(error)
+        }));
+        await message.reply('❌ The command failed safely; no success was recorded.').catch(() => {});
+    }
 });
 
 // Listen for button clicks (Interactions)
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
-    if (global.botPaused) return; // Ignore buttons if bot is stopped
-
-    const data = await tracker.getTrackingData();
-    if (!data) {
-        return interaction.reply({ content: '❌ Tracking data is not available.', ephemeral: true });
-    }
+    if (botPaused) return; // Ignore buttons if bot is stopped
 
     let isDeferred = false;
     try {
+        const data = await tracker.getTrackingData();
+        if (!data) {
+            return interaction.reply({ content: '❌ Tracking data is not available.', ephemeral: true });
+        }
+
         console.log(`[Interaction] Received button click: ${interaction.customId}`);
         try {
             await interaction.deferUpdate(); // Acknowledge the click so it doesn't fail
@@ -771,7 +775,7 @@ client.on('interactionCreate', async interaction => {
 
         if (interaction.customId === 'show_all_trophies') {
             const results = [];
-            const fetchPromises = data.members.map(async (baseline) => {
+            await mapWithConcurrency(data.members, 5, async (baseline) => {
                 const currentMember = await brawlAPI.getPlayer(baseline.tag);
                 if (currentMember) {
                     results.push({
@@ -781,7 +785,6 @@ client.on('interactionCreate', async interaction => {
                     });
                 }
             });
-            await Promise.all(fetchPromises);
             results.sort((a, b) => b.gained - a.gained);
 
             const embed = new EmbedBuilder()
@@ -806,72 +809,13 @@ client.on('interactionCreate', async interaction => {
 
         if (interaction.customId === 'show_all_grind') {
             const results = [];
-            const fetchPromises = data.members.map(async (baseline) => {
+            await mapWithConcurrency(data.members, 5, async (baseline) => {
                 const currentMember = await brawlAPI.getPlayer(baseline.tag);
                 if (currentMember && currentMember.brawlers) {
-                    let totalGrindPoints = 0;
-                    currentMember.brawlers.forEach(currentBrawler => {
-                        const baseBrawler = baseline.brawlers ? baseline.brawlers.find(b => b.id === currentBrawler.id) : null;
-                        const baselineTrophies = baseBrawler ? baseBrawler.trophies : 0;
-                        const trophiesGained = currentBrawler.trophies - baselineTrophies;
-
-                        if (trophiesGained > 0) {
-                            const brackets = [
-                                { min: 0, max: 999, mult: 0.5 },
-                                { min: 1000, max: 1999, mult: 1.0 },
-                                { min: 2000, max: 2499, mult: 3.0 },
-                                { min: 2500, max: 2699, mult: 6.0 },
-                                { min: 2700, max: 2999, mult: 12.0 },
-                                { min: 3000, max: 3099, mult: 25.0 },
-                                { min: 3100, max: 3499, mult: 50.0 },
-                                { min: 3500, max: 3999, mult: 75.0 },
-                                { min: 4000, max: Infinity, mult: 100.0 }
-                            ];
-
-                            let tempPoints = 0;
-                            let currentTrophies = baselineTrophies;
-                            const targetTrophies = currentBrawler.trophies;
-
-                            for (const bracket of brackets) {
-                                if (currentTrophies > bracket.max) continue; // Skip brackets below current trophies
-                                if (currentTrophies >= targetTrophies) break; // Reached target
-
-                                const endOfBracket = Math.min(targetTrophies, bracket.max + 1);
-                                const trophiesInBracket = endOfBracket - currentTrophies;
-
-                                tempPoints += (trophiesInBracket * bracket.mult);
-                                currentTrophies = endOfBracket;
-                            }
-
-                            totalGrindPoints += tempPoints;
-
-                            // Add huge one-time bonus for hitting new Prestige Ranks
-                            let prestigeBonus = 0;
-                            if (baselineTrophies < 1000 && currentBrawler.trophies >= 1000) prestigeBonus += 100;
-                            if (baselineTrophies < 2000 && currentBrawler.trophies >= 2000) prestigeBonus += 500;
-                            if (baselineTrophies < 3000 && currentBrawler.trophies >= 3000) prestigeBonus += 2000;
-                            if (baselineTrophies < 4000 && currentBrawler.trophies >= 4000) prestigeBonus += 10000;
-                            if (baselineTrophies < 5000 && currentBrawler.trophies >= 5000) prestigeBonus += 15000;
-
-                            totalGrindPoints += prestigeBonus;
-                        }
-
-                        // Subtract any exploited bot matches
-                        if (baseBrawler && baseBrawler.illegitimate) {
-                            totalGrindPoints -= baseBrawler.illegitimate;
-                        }
-                    });
-
-                    // Add manual adjustments
-                    const stateObj = baseline.brawlers ? baseline.brawlers.find(b => b.id === -1) : null;
-                    if (stateObj && stateObj.grindAdjustment) {
-                        totalGrindPoints += stateObj.grindAdjustment;
-                    }
-
-                    results.push({ name: baseline.name, grindPoints: Math.floor(totalGrindPoints) });
+                    const grind = calculateMemberGrind(baseline, currentMember);
+                    results.push({ name: baseline.name, grindPoints: grind.total });
                 }
             });
-            await Promise.all(fetchPromises);
             results.sort((a, b) => b.grindPoints - a.grindPoints);
 
             const embed = new EmbedBuilder()
@@ -895,74 +839,33 @@ client.on('interactionCreate', async interaction => {
             }
         }
 
-        if (interaction.customId === 'show_all_rank') {
-            if (!data.isEloTracking || !data.eloMembers) {
-                return interaction.editReply({ content: '❌ Elo tracking is not active.', embeds: [], components: [] });
-            }
-
-            const sorted = data.eloMembers
-                .filter(m => m.currentElo !== null)
-                .sort((a, b) => b.currentElo - a.currentElo);
-
-            const embed = new EmbedBuilder()
-                .setColor('#E91E63')
-                .setTitle('🏆 Full Ranked Elo Leaderboard')
-                .setTimestamp();
-
-            let desc = '';
-            sorted.forEach((member, i) => {
-                desc += `**${i + 1}.** ${member.name}: \`${member.currentElo.toLocaleString()}\` Elo\n`;
-            });
-
-            embed.setDescription(desc);
-            if (isDeferred) {
-                await interaction.editReply({ embeds: [embed], components: [] }).catch(e => console.error('editReply catch:', e.message));
-            } else {
-                await interaction.reply({ embeds: [embed], ephemeral: true }).catch(e => console.error('reply catch:', e.message));
-            }
-        }
-
-        if (interaction.customId === 'show_all_skill') {
-            if (!data.isEloTracking || !data.eloMembers) {
-                return interaction.editReply({ content: '❌ Tracking is not active.', embeds: [], components: [] });
-            }
-
-            const sorted = data.eloMembers
-                .filter(m => m.currentSkill !== null)
-                .sort((a, b) => b.currentSkill - a.currentSkill);
-
-            const embed = new EmbedBuilder()
-                .setColor('#00FFFF')
-                .setTitle('🎯 Full Skill Score Leaderboard')
-                .setTimestamp();
-
-            let desc = '';
-            sorted.forEach((member, i) => {
-                desc += `**${i + 1}.** ${member.name}: \`${member.currentSkill}\` / 10\n`;
-            });
-
-            embed.setDescription(desc);
-            if (isDeferred) {
-                await interaction.editReply({ embeds: [embed], components: [] }).catch(e => console.error('editReply catch:', e.message));
-            } else {
-                await interaction.reply({ embeds: [embed], ephemeral: true }).catch(e => console.error('reply catch:', e.message));
-            }
-        }
-
     } catch (error) {
         console.error("Interaction Error:", error);
     }
 });
 
-// Log in to Discord with your client's token
-if (!process.env.DISCORD_TOKEN) {
-    console.error("CRITICAL ERROR: DISCORD_TOKEN is absolutely missing from environment variables!");
-} else {
-    console.log(`Starting login process... (Token begins with: ${process.env.DISCORD_TOKEN.substring(0, 10)}...)`);
+if (config.supabaseKeyType === 'publishable' || config.supabaseKeyType === 'legacy-anon') {
+    console.warn(JSON.stringify({
+        message: 'Supabase is using a publishable key; configure SUPABASE_SECRET_KEY before enabling RLS'
+    }));
 }
 
-client.login(process.env.DISCORD_TOKEN).then(() => {
-    console.log("Discord client login completed successfully.");
+console.log(JSON.stringify({ message: 'starting Discord login' }));
+client.login(config.discordToken).then(() => {
+    console.log(JSON.stringify({ message: 'Discord login completed' }));
 }).catch(err => {
-    console.error("FATAL: Failed to login to Discord!", err);
+    console.error(JSON.stringify({ message: 'Discord login failed', error: err.message }));
+    server.close();
+    process.exitCode = 1;
 });
+
+function shutdown(signal) {
+    botReady = false;
+    console.log(JSON.stringify({ message: 'shutting down', signal }));
+    client.destroy();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10000).unref();
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));

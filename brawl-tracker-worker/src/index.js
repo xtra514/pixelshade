@@ -1,196 +1,261 @@
 import { createClient } from '@supabase/supabase-js';
+import { processMemberBattlelogs } from './grind-processor.js';
+
+const LEASE_SECONDS = 300;
+let warnedAboutLegacyCommit = false;
 
 export default {
-    async scheduled(event, env, ctx) {
-        ctx.waitUntil(processBattlelogs(env));
+    async scheduled(controller, env, ctx) {
+        validateEnvironment(env);
+        ctx.waitUntil(processBattlelogs(env, controller.scheduledTime));
     }
 };
 
-async function processBattlelogs(env) {
-    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
+function validateEnvironment(env) {
+    const missing = [];
+    if (!env.SUPABASE_URL) missing.push('SUPABASE_URL');
+    if (!env.SUPABASE_SECRET_KEY && !env.SUPABASE_KEY) {
+        missing.push('SUPABASE_SECRET_KEY or SUPABASE_KEY');
+    }
+    if (!env.BRAWL_STARS_TOKEN && !env.BRAWL_API_TOKEN) {
+        missing.push('BRAWL_STARS_TOKEN or BRAWL_API_TOKEN');
+    }
+    if (missing.length > 0) throw new Error(`Missing Worker secrets: ${missing.join(', ')}`);
+}
 
-    // 1. Check if tracking is active
-    const { data: state } = await supabase.from('global_state').select('is_grind_tracking').eq('id', 1).single();
-    if (!state || !state.is_grind_tracking) return;
+function structuredLog(level, message, fields = {}) {
+    const payload = JSON.stringify({ message, ...fields });
+    if (level === 'error') console.error(payload);
+    else if (level === 'warn') console.warn(payload);
+    else console.log(payload);
+}
 
-    // 2. Get all tracked members
-    const { data: members, error } = await supabase.from('club_members').select('*');
-    if (error || !members) return;
-
-    for (const member of members) {
-        try {
-            const formattedTag = member.tag.replace('#', '%23');
-            const res = await fetch(`https://bsproxy.royaleapi.dev/v1/players/${formattedTag}/battlelog`, {
-                headers: {
-                    'Authorization': `Bearer ${env.BRAWL_API_TOKEN}`,
-                    'Accept': 'application/json'
-                }
-            });
-
-            if (!res.ok) continue;
-            const logData = await res.json();
-            const logs = logData.items;
-            if (!logs || logs.length === 0) continue;
-
-            const sortedLogs = logs
-                .filter(l => l.battleTime)
-                .sort((a, b) => a.battleTime.localeCompare(b.battleTime));
-
-            let newLastTime = member.last_battle_time || '';
-            let brawlers = member.brawlers || [];
-            
-            // Extract persistent state across cron runs
-            let stateObj = brawlers.find(b => b.id === -1);
-            if (!stateObj) {
-                stateObj = { 
-                    id: -1, 
-                    lossCount: 0, 
-                    exploitArmed: false
-                };
-                brawlers.push(stateObj);
-            }
-            
-            let lossCount = stateObj.lossCount || 0;
-            let exploitArmed = stateObj.exploitArmed || false;
-            let dirty = false;
-
-            let startIndex = sortedLogs.findIndex(log => log.battleTime === member.last_battle_time);
-            let logsToProcess = [];
-            
-            if (!member.last_battle_time || member.last_battle_time === '20000101T000000.000Z') {
-                console.log(`[${member.tag}] First time tracking. Skipping historical matches.`);
-                logsToProcess = []; // Just update last_battle_time, skip checking exploits
-            } else if (startIndex === -1) {
-                // If last_battle_time not found, process all (might be very old)
-                logsToProcess = sortedLogs;
-            } else {
-                logsToProcess = sortedLogs.slice(startIndex + 1);
-            }
-
-            for (const log of logsToProcess) {
-                if (member.last_battle_time && log.battleTime <= member.last_battle_time) continue;
-                
-                // Find my brawler
-                let myBrawler = null;
-                if (log.battle.teams) {
-                    for (const team of log.battle.teams) {
-                        for (const p of team) {
-                            if (p.tag === member.tag) myBrawler = p.brawler;
-                        }
-                    }
-                } else if (log.battle.players) {
-                    for (const p of log.battle.players) {
-                        if (p.tag === member.tag) myBrawler = p.brawler;
-                    }
-                }
-
-                if (!myBrawler) continue;
-
-                if (log.battle.type !== 'ranked') {
-                    console.log(`[${member.tag}] Skipping non-trophy match (type: ${log.battle.type})`);
-                    continue;
-                }
-
-                let isLoss = (log.battle.result === 'defeat' || (log.battle.trophyChange !== undefined && log.battle.trophyChange < 0));
-                let isWin = (log.battle.result === 'victory' || (log.battle.trophyChange !== undefined && log.battle.trophyChange > 0));
-
-                if (log.battle.rank !== undefined) {
-                    if (log.battle.mode === 'soloShowdown') {
-                        if (log.battle.rank > 5) isLoss = true;
-                        else if (log.battle.rank < 5) isWin = true;
-                    } else if (log.battle.mode === 'duoShowdown') {
-                        if (log.battle.rank > 3) isLoss = true;
-                        else if (log.battle.rank < 3) isWin = true;
-                    }
-                }
-
-                if (isLoss) {
-                    console.log(`[${member.tag}] Defeat with brawler ${myBrawler.id} (${myBrawler.name}) - ${myBrawler.trophies} Trophies.`);
-                    if (myBrawler.trophies <= 1000) {
-                        lossCount++;
-                        if (lossCount >= 2) {
-                            exploitArmed = true;
-                            console.log(`[${member.tag}] 🚨 Trap armed! 2+ losses reached. Next win <= 1999 will be flagged as a bot match exploit.`);
-                        } else {
-                            console.log(`[${member.tag}] 📉 Loss count is now ${lossCount}.`);
-                        }
-                    } else if (myBrawler.trophies % 1000 === 0) {
-                        console.log(`[${member.tag}] ⏸️ Loss on Prestige Floor (${myBrawler.trophies}). Streak preserved but not incremented.`);
-                    } else {
-                        lossCount = 0;
-                        exploitArmed = false;
-                        console.log(`[${member.tag}] ❌ Trophies > 1000 and not on floor. Resetting all exploit state.`);
-                    }
-                } else if (isWin) {
-                    console.log(`[${member.tag}] Victory with brawler ${myBrawler.id} (${myBrawler.name}) - ${myBrawler.trophies} Trophies.`);
-                    if (exploitArmed && myBrawler.trophies <= 1999) {
-                        const gained = (log.battle.trophyChange && log.battle.trophyChange > 0) ? log.battle.trophyChange : 8;
-                        
-                        let bIndex = brawlers.findIndex(b => b.id === myBrawler.id);
-                        if (bIndex !== -1) {
-                            brawlers[bIndex].illegitimate = (brawlers[bIndex].illegitimate || 0) + gained;
-                        } else {
-                            brawlers.push({
-                                id: myBrawler.id,
-                                name: myBrawler.name,
-                                trophies: myBrawler.trophies,
-                                illegitimate: gained
-                            });
-                        }
-                        dirty = true;
-                        console.log(`[${member.tag}] 🚨 BOT EXPLOIT CAUGHT! Stripped ${gained} Grind Points from ${myBrawler.name}.`);
-                        
-                        const discordToken = env.DISCORD_TOKEN ? env.DISCORD_TOKEN.trim() : null;
-                        const alertChannelId = env.ALERT_CHANNEL_ID ? env.ALERT_CHANNEL_ID.trim() : null;
-
-                        // Send Alert to Discord
-                        if (discordToken && alertChannelId) {
-                            const alertMsg = `🚨 **BOT EXPLOIT DETECTED** 🚨\nPlayer **${member.name}** (\`${member.tag}\`) was caught attempting to farm bot matches using \`${myBrawler.name}\`!\n💥 **Stripped ${gained} Grind Points** from their score!`;
-                            try {
-                                const discordRes = await fetch(`https://discord.com/api/v10/channels/${alertChannelId}/messages`, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Authorization': `Bot ${discordToken}`,
-                                        'Content-Type': 'application/json'
-                                    },
-                                    body: JSON.stringify({ content: alertMsg })
-                                });
-                                if (!discordRes.ok) {
-                                    console.error('Discord API rejected message:', discordRes.status, await discordRes.text());
-                                }
-                            } catch (e) {
-                                console.error('Failed to send Discord alert:', e);
-                            }
-                        }
-                        
-                    } else {
-                        console.log(`[${member.tag}] 🛑 Win streak cleared (Normal win).`);
-                    }
-                    
-                    // Reset all state on any win
-                    lossCount = 0;
-                    exploitArmed = false;
-                }
-            }
-
-            // Always update newLastTime to the absolute newest log
-            if (sortedLogs.length > 0) {
-                newLastTime = sortedLogs[sortedLogs.length - 1].battleTime;
-            }
-
-            if (newLastTime !== member.last_battle_time || dirty) {
-                stateObj.lossCount = lossCount;
-                stateObj.exploitArmed = exploitArmed;
-                
-                const updates = { 
-                    last_battle_time: newLastTime,
-                    brawlers: brawlers
-                };
-                await supabase.from('club_members').update(updates).eq('tag', member.tag);
-            }
-
-        } catch (e) {
-            console.error(`Error processing ${member.tag}: ${e.message}`);
+function createSupabaseClient(env) {
+    return createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY || env.SUPABASE_KEY, {
+        auth: {
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+            persistSession: false
         }
+    });
+}
+
+function isUnavailableRpc(error, allowPermissionFallback = false) {
+    return error?.code === 'PGRST202'
+        || (allowPermissionFallback && error?.code === '42501');
+}
+
+async function acquireLease(supabase, allowPermissionFallback) {
+    const owner = crypto.randomUUID();
+    const { data, error } = await supabase.rpc('acquire_grind_worker_lease', {
+        p_lease_seconds: LEASE_SECONDS,
+        p_owner: owner
+    });
+
+    if (error && isUnavailableRpc(error, allowPermissionFallback)) {
+        structuredLog('warn', 'database lease is unavailable; running in legacy single-worker mode');
+        return { acquired: true, owner: null };
+    }
+    if (error) throw new Error(`Could not acquire Worker lease: ${error.message}`);
+
+    return { acquired: data === true, owner };
+}
+
+async function releaseLease(supabase, owner) {
+    if (!owner) return;
+    const { error } = await supabase.rpc('release_grind_worker_lease', { p_owner: owner });
+    if (error) {
+        structuredLog('error', 'could not release database lease', { error: error.message });
+    }
+}
+
+async function renewLease(supabase, owner) {
+    if (!owner) return;
+    const { data, error } = await supabase.rpc('acquire_grind_worker_lease', {
+        p_lease_seconds: LEASE_SECONDS,
+        p_owner: owner
+    });
+    if (error) throw new Error(`Could not renew Worker lease: ${error.message}`);
+    if (data !== true) throw new Error('Worker lease was lost before member processing');
+}
+
+async function fetchBattlelogs(memberTag, token) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+        const response = await fetch(
+            `https://bsproxy.royaleapi.dev/v1/players/${encodeURIComponent(memberTag)}/battlelog`,
+            {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: 'application/json'
+                },
+                signal: controller.signal
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`Brawl API returned HTTP ${response.status}`);
+        }
+
+        const body = await response.json();
+        return Array.isArray(body.items) ? body.items : [];
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function sendDiscordAlert(env, member, alert) {
+    const discordToken = env.DISCORD_TOKEN?.trim();
+    const alertChannelId = env.ALERT_CHANNEL_ID?.trim();
+    if (!discordToken || !alertChannelId) return;
+
+    const content = `🚨 **BOT EXPLOIT DETECTED** 🚨\nPlayer **${member.name}** (\`${member.tag}\`) was caught attempting to farm bot matches using \`${alert.brawlerName}\`!\n💥 **Stripped ${alert.gained} Grind Points** from their score!`;
+    const response = await fetch(`https://discord.com/api/v10/channels/${alertChannelId}/messages`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bot ${discordToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ content })
+    });
+
+    if (!response.ok) {
+        throw new Error(`Discord API returned HTTP ${response.status}`);
+    }
+}
+
+async function commitMemberState(supabase, env, member, result) {
+    const allowPermissionFallback = !env.SUPABASE_SECRET_KEY;
+    const { data: committed, error: atomicError } = await supabase.rpc(
+        'commit_grind_member_state_atomic',
+        {
+            p_brawlers: result.brawlers,
+            p_expected_cursor: result.previousCursor,
+            p_new_cursor: result.lastBattleTime,
+            p_tag: member.tag
+        }
+    );
+
+    if (!atomicError) {
+        return {
+            committed: committed === true,
+            cursorColumn: 'last_grind_battle_time',
+            mode: 'atomic'
+        };
+    }
+    if (!isUnavailableRpc(atomicError, allowPermissionFallback)) {
+        throw new Error(`Could not commit member state atomically: ${atomicError.message}`);
+    }
+
+    if (!warnedAboutLegacyCommit) {
+        warnedAboutLegacyCommit = true;
+        structuredLog('warn', 'atomic member commit is unavailable; using legacy conditional update');
+    }
+
+    const hasDedicatedGrindCursor = Object.prototype.hasOwnProperty.call(
+        member,
+        'last_grind_battle_time'
+    );
+    const cursorColumn = hasDedicatedGrindCursor
+        ? 'last_grind_battle_time'
+        : 'last_battle_time';
+    const rawPreviousCursor = hasDedicatedGrindCursor
+        ? member.last_grind_battle_time
+        : member.last_battle_time;
+    const updates = {
+        brawlers: result.brawlers,
+        [cursorColumn]: result.lastBattleTime
+    };
+    let query = supabase
+        .from('club_members')
+        .update(updates)
+        .eq('tag', member.tag);
+    query = rawPreviousCursor === null || rawPreviousCursor === undefined
+        ? query.is(cursorColumn, null)
+        : query.eq(cursorColumn, rawPreviousCursor);
+
+    const { data, error } = await query.select('tag');
+    if (error) throw new Error(`Could not commit member state: ${error.message}`);
+    return {
+        committed: Array.isArray(data) && data.length === 1,
+        cursorColumn,
+        mode: 'legacy-conditional'
+    };
+}
+
+async function processMember(supabase, env, member) {
+    const token = env.BRAWL_STARS_TOKEN || env.BRAWL_API_TOKEN;
+    const logs = await fetchBattlelogs(member.tag, token);
+    const result = processMemberBattlelogs(member, logs);
+    if (!result.changed) return;
+
+    const commit = await commitMemberState(supabase, env, member, result);
+    if (!commit.committed) {
+        structuredLog('warn', 'member state changed concurrently; stale result was discarded', {
+            memberTag: member.tag
+        });
+        return;
+    }
+
+    for (const alert of result.alerts) {
+        try {
+            await sendDiscordAlert(env, member, alert);
+        } catch (error) {
+            structuredLog('error', 'Discord alert failed after member state was committed', {
+                error: error.message,
+                memberTag: member.tag
+            });
+        }
+    }
+
+    structuredLog('info', 'member battlelogs processed', {
+        alerts: result.alerts.length,
+        commitMode: commit.mode,
+        cursorColumn: commit.cursorColumn,
+        firstObservation: result.firstObservation,
+        memberTag: member.tag,
+        processedLogs: result.processedLogs
+    });
+}
+
+async function processBattlelogs(env, scheduledTime) {
+    const supabase = createSupabaseClient(env);
+    const { data: state, error: stateError } = await supabase
+        .from('global_state')
+        .select('*')
+        .eq('id', 1)
+        .single();
+
+    if (stateError) throw new Error(`Could not read global state: ${stateError.message}`);
+    if (!state?.is_grind_tracking) {
+        structuredLog('info', 'scheduled run skipped because Grind tracking is inactive', { scheduledTime });
+        return;
+    }
+
+    const lease = await acquireLease(supabase, !env.SUPABASE_SECRET_KEY);
+    if (!lease.acquired) {
+        structuredLog('info', 'scheduled run skipped because another Worker holds the lease', { scheduledTime });
+        return;
+    }
+
+    try {
+        const { data: members, error: memberError } = await supabase.from('club_members').select('*');
+        if (memberError) throw new Error(`Could not read club members: ${memberError.message}`);
+
+        for (const member of members || []) {
+            await renewLease(supabase, lease.owner);
+            try {
+                await processMember(supabase, env, member);
+            } catch (error) {
+                structuredLog('error', 'member processing failed', {
+                    error: error instanceof Error ? error.message : String(error),
+                    memberTag: member.tag
+                });
+            }
+        }
+    } finally {
+        await releaseLease(supabase, lease.owner);
     }
 }

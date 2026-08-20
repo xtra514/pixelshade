@@ -1,20 +1,22 @@
 {
   "name": "pixelshade-bot",
   "version": "1.0.0",
-  "description": "A basic Discord bot",
+  "description": "Discord bot and battle tracker for Pixel Shade",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test",
+    "check": "node --check index.js && node --check tracker.js && node --check brawlAPI.js && node --check config.js && node --check domain/grind.js && node --check invite-tracker/domain.js && node --check invite-tracker/service.js && node --check invite-tracker/store.js && node --check lib/concurrency.js && node --check scripts/backup-supabase.cjs && node --check scripts/verify-supabase-backup.cjs && node --check brawl-tracker-worker/src/index.js && node --check brawl-tracker-worker/src/grind-processor.js",
+    "audit:prod": "npm audit --omit=dev",
+    "backup:supabase": "node --use-system-ca scripts/backup-supabase.cjs",
+    "verify:backup": "node scripts/verify-supabase-backup.cjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.108.2",
-    "axios": "^1.13.6",
-    "discord.js": "^14.14.1",
-    "dotenv": "^16.4.5",
-    "express": "^5.2.1",
-    "got-scraping": "^4.2.1",
-    "node-cron": "^4.2.1",
-    "request": "^2.88.2"
+    "@supabase/supabase-js": "^2.112.3",
+    "axios": "^1.19.0",
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
   },
   "engines": {
     "node": ">=20.0.0"

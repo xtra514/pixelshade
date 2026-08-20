@@ -1,10 +1,7 @@
 const axios = require('axios');
-const dotenv = require('dotenv');
-dotenv.config();
+const config = require('./config');
 
-const API_KEY = process.env.BRAWL_STARS_TOKEN;
 const BASE_URL = 'https://bsproxy.royaleapi.dev/v1';
-const BSPRO_URL = 'https://bspro.gg/api';
 
 /**
  * Creates an configured axios instance for the Brawl Stars API
@@ -12,9 +9,10 @@ const BSPRO_URL = 'https://bspro.gg/api';
 const apiClient = axios.create({
     baseURL: BASE_URL,
     headers: {
-        'Authorization': `Bearer ${API_KEY}`,
+        'Authorization': `Bearer ${config.brawlStarsToken}`,
         'Accept': 'application/json'
-    }
+    },
+    timeout: 15000
 });
 
 /**
@@ -58,28 +56,6 @@ async function getPlayer(playerTag) {
 }
 
 /**
- * Fetches a player's bspro.gg aggregated stats
- * @param {string} playerTag - The tag of the player
- * @returns {Promise<Object|null>} - bspro.gg response body
- */
-async function getBsproPlayerData(playerTag) {
-    try {
-        const tag = normalizeTag(playerTag);
-        const response = await axios.get(`${BSPRO_URL}/playerData/v2/${tag}`, {
-            headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'PixelShadeBot/1.0'
-            },
-            timeout: 20000
-        });
-        return response.data;
-    } catch (error) {
-        console.error(`Error fetching bspro.gg data for ${playerTag}:`, error.response?.data || error.message);
-        return null;
-    }
-}
-
-/**
  * Fetches an individual player's recent battle log
  * @param {string} playerTag - The tag of the player
  * @returns {Promise<Array>} - Array of battle log objects
@@ -98,6 +74,5 @@ async function getBattlelog(playerTag) {
 module.exports = {
     getClubMembers,
     getPlayer,
-    getBsproPlayerData,
     getBattlelog
 };
